@@ -89,6 +89,8 @@ let lastSpokeAt = 0
 let dashTimer: Timer | null = null
 // The minute, sync and frame clocks of the session set up last, stopped when another is set up.
 let clocks: Timer[] = []
+// The setUp() under way, so the draws that find no pet meanwhile start no second one.
+let settingUp: Promise<void> | null = null
 // Set while the small model thinks of a joke about the person's prompt, so the stock cheer stays quiet.
 let isQuipping = false
 // The session's folder name, for jokes about the project at hand.
@@ -374,6 +376,21 @@ async function setUp($: EngineInterface, cwd: string): Promise<void> {
     description: 'Your pixel pet: feed, play, clean, put to bed, shop for skins (/pet help)',
     argumentHint: '[feed | snack | play | game | clean | meds | sleep | wake | coins | shop | buy | skin | upgrade | revive | help]',
   })
+}
+
+/**
+ * setUp() with one run at a time: the footer asks for it on every draw that finds no pet, alongside
+ * session.start and classic.SessionStart, and two runs side by side would each start a set of clocks.
+ * Without `cwd` it reads the session's own.
+ */
+function setUpOnce($: EngineInterface, cwd?: string): Promise<void> {
+  settingUp ??= (cwd === undefined ? $.session.cwd().catch(() => '') : Promise.resolve(cwd))
+    .then(dir => setUp($, dir))
+    .finally(() => {
+      settingUp = null
+    })
+
+  return settingUp
 }
 
 /** Someone is about: a typed prompt, a /pet, a band button. An idle spell before it counts as time away. */
@@ -699,7 +716,7 @@ export const register: Register = (on, options) => {
   about = typeof options.about === 'string' ? options.about.trim().slice(0, 300) : ''
 
   on('session.start', async ($, e, next) => {
-    await setUp($, e.cwd)
+    await setUpOnce($, e.cwd)
 
     return next(e)
   })
@@ -708,7 +725,7 @@ export const register: Register = (on, options) => {
   // host's $.state and the /pet command start over for it: without this the pet is gone until a restart.
   on('classic.SessionStart', async ($, e, next) => {
     if ((await read($, pet)) === null) {
-      await setUp($, e.cwd)
+      await setUpOnce($, e.cwd)
     }
 
     return next(e)
@@ -870,6 +887,11 @@ export const register: Register = (on, options) => {
   // Bottom right of the prompt footer, the engine's own mode labels kept beside it.
   on('ui.render', { component: 'SessionMode' }, async ($, e, next) => {
     const current = await read($, pet)
+    // No pet in this session's state: one the engine moved to with no start event of its own, as a
+    // `claude --resume` or a /resume can. Setting it up draws the footer again once the pet is in.
+    if (current === null) {
+      void setUpOnce($)
+    }
     if (current === null || (await read($, isHidden)) || (await read($, place)) !== 'footer') {
       return next(e)
     }
@@ -886,6 +908,9 @@ export const register: Register = (on, options) => {
 
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     const current = await read($, pet)
+    if (current === null) {
+      void setUpOnce($)
+    }
     const isQuiet = e.props.hasSurvey || current === null || (await read($, isHidden)) || (await read($, place)) !== 'band'
     if (isQuiet) {
       return next(e)

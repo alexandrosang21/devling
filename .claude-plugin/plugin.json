@@ -1,7 +1,7 @@
 {
   "name": "devling",
   "displayName": "Devling",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "A pixel pet under your Claude Code prompt: it hatches, grows up as Claude works, earns coins from your finished tasks and wears the skins you buy with them",
   "author": {
     "name": "Alexander Angelov",

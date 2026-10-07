@@ -298,6 +298,24 @@ describe('care', () => {
     expect(await ui.find({ type: 'Text', text: /♥/ })).toBeDefined()
     await ui.unmount()
   })
+
+  test('a session that gets no start event at all still shows the pet once the footer draws', async ($, on) => {
+    const clock = mock.clock(on, { now: NOW })
+    mock.store(on, { pet: oldPet({ hunger: 90 }) })
+    on('command.register', ($, e) => ({ value: { command: e.name } }))
+    on('ui.render', ($, e) => {
+      const { Box } = $.ui.resolve(e)
+
+      return <Box />
+    })
+    // As `claude --resume` can: the start events went to the session the process began with.
+    const ui = await $.ui.mount({ plugin: 'devling', surface: 'terminal', component: 'SessionMode', props: { modes: [] } })
+    await clock.advance(0)
+
+    expect(await ui.find({ type: 'Text', text: /♥/ })).toBeDefined()
+    expect(await pet($)).toContain('Biscuit · baby')
+    await ui.unmount()
+  })
 })
 
 const anyOf = (lines: readonly string[]) => new RegExp(lines.map(line => line.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|'))
