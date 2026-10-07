@@ -163,6 +163,8 @@ Loading the folder once writes this build's typings to `.claude-plugin/types/` (
 - `claude plugin validate --strict .` checks the manifest, the marketplace file and the hooks module
 - Prices and earnings live in `hooks/economy.ts`, the species and their drawings in `hooks/skins.ts`
 
+Before opening a pull request, read [CONTRIBUTING.md](CONTRIBUTING.md).
+
 ## License
 
 [MIT](LICENSE)
