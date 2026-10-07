@@ -12,6 +12,11 @@ const LEAVE_AFTER_MIN = 12 * 60
 // While no session is open it decays at the waking rate, never by more than this, never below the floor.
 const AWAY_LOSS_CAP = 40
 const AWAY_FLOOR = 10
+// An hour with no prompt typed and no /pet in any session is time away too, as if every session had
+// closed: a terminal left open overnight neither starves it nor sends it off.
+export const IDLE_MS = 60 * MINUTE
+
+export const isIdle = (p: Pet, now: number): boolean => now - p.lastActiveAt >= IDLE_MS
 
 export type Stage = 'egg' | 'baby' | 'child' | 'teen' | 'adult' | 'grumpy' | 'angel'
 export type LifeEvent = 'hatched' | 'pooped' | 'sick' | 'fell-asleep' | 'woke' | 'hungry' | 'sad' | 'left'
@@ -95,6 +100,7 @@ export function egg(name: string, now: number, skin = DEFAULT_SKIN, foodHearts =
     bornAt: now,
     hatchedAt: null,
     lastSeenAt: now,
+    lastActiveAt: now,
     poopDueAt: null,
     leftAt: null,
     skin,
@@ -129,6 +135,8 @@ export function revive(value: unknown, now: number): Pet | null {
     // A pet from before eggs existed has long hatched.
     hatchedAt: saved.hatchedAt === undefined ? bornAt : saved.hatchedAt,
     lastSeenAt: num(saved.lastSeenAt, now),
+    // A pet from before idle spells was last about when it was last seen.
+    lastActiveAt: num(saved.lastActiveAt, num(saved.lastSeenAt, now)),
     poopDueAt: saved.poopDueAt ?? null,
     leftAt: saved.leftAt ?? null,
     // A pet from before skins is the original species.
@@ -166,7 +174,7 @@ export function eventsBetween(before: Pet, after: Pet): LifeEvent[] {
 /** The pet as you find it after time away: hungrier, rested, awake to greet you. */
 export function comeBack(p: Pet, now: number): Pet {
   if (p.leftAt !== null) {
-    return { ...p, lastSeenAt: now }
+    return { ...p, lastSeenAt: now, lastActiveAt: now }
   }
   const minutes = Math.max(0, (now - p.lastSeenAt) / MINUTE)
   const lose = (value: number, perMinute: number): number =>
@@ -182,13 +190,28 @@ export function comeBack(p: Pet, now: number): Pet {
     poopDueAt: null,
     hatchedAt: p.hatchedAt ?? (now - p.bornAt >= HATCH_MS ? now : null),
     lastSeenAt: now,
+    lastActiveAt: now,
   }
+}
+
+/**
+ * Someone is about: a typed prompt or a /pet. An idle spell before it comes back as time away, counted
+ * from the hour it went idle, the way comeBack() counts a closed session.
+ */
+export function active(p: Pet, now: number): Pet {
+  const pet = isIdle(p, now) ? comeBack({ ...p, lastSeenAt: p.lastActiveAt + IDLE_MS }, now) : p
+
+  return { ...pet, lastActiveAt: now }
 }
 
 /** One minute of life while a session is open. */
 export function live(p: Pet, now: number, roll: Roll): { pet: Pet; events: LifeEvent[] } {
   const events: LifeEvent[] = []
   if (p.leftAt !== null) {
+    return { pet: p, events }
+  }
+  // Nobody about for an hour: its minutes wait, and come back as time away when someone is (active()).
+  if (isIdle(p, now)) {
     return { pet: p, events }
   }
   if (p.hatchedAt === null) {

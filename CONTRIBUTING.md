@@ -47,6 +47,8 @@ The full list is in `.claude/CLAUDE.md`, which Claude Code reads on its own when
 
 A species is four drawings (baby, child, teen, adult), a palette, a price and a one-line blurb in `hooks/skins.ts`. The egg, the grumpy adult and the angel are derived from the drawings. Keep to flat colors, one per pixel, and add the species to the list in the README.
 
+The README's pictures are drawn by the mod's own code. After changing a drawing, a palette or the footer, redraw them with `npx -y tsx@4 scripts/pictures.ts` and commit `docs/`; CI fails while they are stale.
+
 ## Style
 
 - TypeScript with no semicolons, single quotes and 2-space indents.

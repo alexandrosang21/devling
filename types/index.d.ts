@@ -18,6 +18,8 @@ export type Pet = {
   /** null while it is still an egg */
   hatchedAt: number | null
   lastSeenAt: number
+  /** When someone last typed a prompt or used /pet, in any session; an hour past it, minutes count as time away. */
+  lastActiveAt: number
   /** When the last meal comes out the other end. */
   poopDueAt: number | null
   /** When it flew off to the pixel stars; null while it lives here. */
@@ -67,6 +69,8 @@ declare module 'claude-code' {
       place: Place
       speech: Speech | null
       act: Act | null
+      /** Steps a play dash has run, on a clock quicker than the frames; null when it walks. */
+      dash: number | null
       game: Game | null
       wallet: Wallet | null
     }

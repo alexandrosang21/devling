@@ -1,5 +1,5 @@
 import { atom, read, update } from 'claude-code'
-import type { ElementTable, EngineInterface, Register } from 'claude-code'
+import type { ElementTable, EngineInterface, Register, Timer } from 'claude-code'
 
 import type { Act, ActKind, Pet, Place, Speech, Wallet } from '../types'
 import {
@@ -9,6 +9,7 @@ import {
   NEW_TASK_LINES,
   POOP,
   POOP_COLOR,
+  bubbleLines,
   cleanQuip,
   columnsOf,
   pick,
@@ -25,6 +26,7 @@ import {
   HEART,
   MAX_HEARTS,
   MINUTE,
+  active,
   bringBack,
   clamp,
   comeBack,
@@ -54,6 +56,10 @@ const TICK_SLACK_MS = 5_000
 // How often a session looks for what another one saved: switching sessions shows the same pet within this.
 const SYNC_MS = 10_000
 const FRAME_MS = 1_500
+// Playing, it dashes on a clock of its own, ten times the walk, while the frames that time its blinks,
+// notes and bubble keep their pace; forty steps last about as long as the play act.
+const DASH_MS = 150
+const DASH_STEPS = 40
 const SPEECH_FRAMES = 5
 // Chatter about Claude's work waits this long after the pet last spoke.
 const CHATTER_GAP_MS = 20_000
@@ -74,10 +80,15 @@ const frame = atom({ plugin: 'devling', key: 'frame' } as const, 0)
 const place = atom({ plugin: 'devling', key: 'place' } as const, 'footer' as Place)
 const speech = atom({ plugin: 'devling', key: 'speech' } as const, null)
 const act = atom({ plugin: 'devling', key: 'act' } as const, null)
+const dash = atom({ plugin: 'devling', key: 'dash' } as const, null)
 const game = atom({ plugin: 'devling', key: 'game' } as const, null)
 const wallet = atom({ plugin: 'devling', key: 'wallet' } as const, null)
 
 let lastSpokeAt = 0
+// The running dash, stopped when a new one starts.
+let dashTimer: Timer | null = null
+// The minute, sync and frame clocks of the session set up last, stopped when another is set up.
+let clocks: Timer[] = []
 // Set while the small model thinks of a joke about the person's prompt, so the stock cheer stays quiet.
 let isQuipping = false
 // The session's folder name, for jokes about the project at hand.
@@ -140,15 +151,34 @@ const HELP = [
   '  /pet new <name>      a new egg once it has flown off (/pet new! starts over now)',
 ].join('\n')
 
+// The frame is read into `at`, never `tick`: Claude Code 2.1.287 to 2.1.289 refuse a hooks module where a
+// local shares its name with a top-level function handed $, here tick().
 async function say($: EngineInterface, text: string): Promise<void> {
-  const tick = await read($, frame)
+  const at = await read($, frame)
   lastSpokeAt = await $.clock.now()
-  await update($, speech, () => ({ text, untilFrame: tick + SPEECH_FRAMES }))
+  await update($, speech, () => ({ text, untilFrame: at + SPEECH_FRAMES }))
 }
 
 async function startAct($: EngineInterface, kind: ActKind): Promise<void> {
-  const tick = await read($, frame)
-  await update($, act, () => ({ kind, startFrame: tick }))
+  const at = await read($, frame)
+  await update($, act, () => ({ kind, startFrame: at }))
+  if (kind === 'play') {
+    await startDash($)
+  }
+}
+
+async function startDash($: EngineInterface): Promise<void> {
+  dashTimer?.cancel()
+  let steps = 0
+  await update($, dash, () => steps)
+  const timer = $.clock.every(DASH_MS, () => {
+    steps += 1
+    if (steps >= DASH_STEPS) {
+      timer.cancel()
+    }
+    void update($, dash, () => (steps >= DASH_STEPS ? null : steps))
+  })
+  dashTimer = timer
 }
 
 const canTalk = (p: Pet | null): p is Pet => p !== null && !p.isAsleep && stageOf(p) !== 'egg' && stageOf(p) !== 'angel'
@@ -296,6 +326,60 @@ async function change($: EngineInterface, fn: (p: Pet) => Pet): Promise<{ pet: P
   }
 
   return { pet: after, hasGrown: await celebrate($, before, after) }
+}
+
+/**
+ * Puts the pet in this session's $.state, starts its clocks and declares /pet. Runs at session.start and
+ * again for a session a /resume or a /clear starts in the same process, the old clocks stopped first so a
+ * second set never ages it twice.
+ */
+async function setUp($: EngineInterface, cwd: string): Promise<void> {
+  project = cwd.split(/[\\/]/).filter(part => part !== '').pop() ?? ''
+  // A hot reload keeps the session's pet unless another session saved a newer one; a fresh session
+  // finds the saved one, hungrier for the time away.
+  const now = await $.clock.now()
+  // Both go through revive: a pet the previous version left in the session lacks the newer fields too.
+  const kept = revive(await read($, pet), now)
+  const saved = revive(await $.store.get(STORE_KEY), now)
+  const loaded = (kept === null ? null : newer(kept, saved)) ?? (saved === null ? egg(DEFAULT_NAME, now) : comeBack(saved, now))
+  await update($, pet, () => loaded)
+  // A hot reload cancels the clock a dash runs on; it walks again rather than stand mid-dash.
+  await update($, dash, () => null)
+  await $.store.set(STORE_KEY, loaded)
+  if (kept === null && saved === null) {
+    $.ui.toast('An egg appeared! It hatches in a couple of minutes. /pet')
+  } else if (kept === null && saved !== null && now - saved.lastSeenAt > 30 * MINUTE && stageOf(loaded) !== 'angel') {
+    await say($, "you're back! I missed you")
+  }
+  // Opens the day: the first session of one is paid.
+  await withWallet($, w => w)
+
+  for (const clock of clocks) {
+    clock.cancel()
+  }
+  clocks = [
+    $.clock.every(TICK_MS, () => {
+      void tick($)
+    }),
+    $.clock.every(SYNC_MS, () => {
+      void sync($)
+    }),
+    $.clock.every(FRAME_MS, () => {
+      void update($, frame, n => n + 1)
+    }),
+  ]
+
+  await $.command.register({
+    name: 'pet',
+    description: 'Your pixel pet: feed, play, clean, put to bed, shop for skins (/pet help)',
+    argumentHint: '[feed | snack | play | game | clean | meds | sleep | wake | coins | shop | buy | skin | upgrade | revive | help]',
+  })
+}
+
+/** Someone is about: a typed prompt, a /pet, a band button. An idle spell before it counts as time away. */
+async function touch($: EngineInterface): Promise<void> {
+  const now = await $.clock.now()
+  await change($, p => active(p, now))
 }
 
 async function tick($: EngineInterface): Promise<void> {
@@ -526,13 +610,14 @@ async function bringBackPet($: EngineInterface): Promise<string> {
   return `${changed?.pet.name ?? current.name} is back, ${after.coins} 🪙 left.`
 }
 
-type View = { pet: Pet; tick: number; act: Act | null; speech: Speech | null; coins: number | null }
+type View = { pet: Pet; tick: number; act: Act | null; dash: number | null; speech: Speech | null; coins: number | null }
 
 async function viewOf($: EngineInterface, current: Pet): Promise<View> {
   return {
     pet: current,
     tick: await read($, frame),
     act: await read($, act),
+    dash: await read($, dash),
     speech: await read($, speech),
     coins: (await read($, wallet))?.coins ?? null,
   }
@@ -557,23 +642,28 @@ function screen(ui: ElementTable, view: View, side: 'left' | 'right') {
   // Each poop is three columns and a space, the gap before them included.
   const poopColumns = stageOf(view.pet) === 'angel' ? 0 : view.pet.poops * 4
   const lane = Math.max(LANE, columnsOf(line) - poopColumns)
-  const scene = sceneOf(view.pet, view.tick, view.act, lane)
-  const said = view.speech !== null && view.tick < view.speech.untilFrame ? view.speech.text : null
+  const scene = sceneOf(view.pet, view.tick, view.act, lane, view.dash)
+  const said = view.speech !== null && view.tick < view.speech.untilFrame ? bubbleLines(view.speech.text) : []
   const drawRow = (row: Row) => (
     <Box flexDirection="row">{row.length === 0 ? <Text> </Text> : row.map(segment => <Text {...textProps(segment)}>{segment.text}</Text>)}</Box>
   )
+  // As tall as the bubble, the mark on the row above its bottom edge: beside the pet's middle row.
   const pointer = (mark: string) => (
     <Box flexDirection="column">
-      <Text> </Text>
+      {said.map(() => (
+        <Text> </Text>
+      ))}
       <Text color="claude">{mark}</Text>
       <Text> </Text>
     </Box>
   )
-  const bubble = said !== null && (
+  const bubble = said.length > 0 && (
     <Box flexDirection="row">
       {side === 'right' && pointer('◂')}
-      <Box borderStyle="round" borderColor="claude" paddingX={1}>
-        <Text>{said}</Text>
+      <Box borderStyle="round" borderColor="claude" paddingX={1} flexDirection="column">
+        {said.map(text => (
+          <Text>{text}</Text>
+        ))}
       </Box>
       {side === 'left' && pointer('▸')}
     </Box>
@@ -609,42 +699,20 @@ export const register: Register = (on, options) => {
   about = typeof options.about === 'string' ? options.about.trim().slice(0, 300) : ''
 
   on('session.start', async ($, e, next) => {
-    project = e.cwd.split(/[\\/]/).filter(part => part !== '').pop() ?? ''
-    // A hot reload keeps the session's pet unless another session saved a newer one; a fresh session
-    // finds the saved one, hungrier for the time away.
-    const now = await $.clock.now()
-    // Both go through revive: a pet the previous version left in the session lacks the newer fields too.
-    const kept = revive(await read($, pet), now)
-    const saved = revive(await $.store.get(STORE_KEY), now)
-    const loaded = (kept === null ? null : newer(kept, saved)) ?? (saved === null ? egg(DEFAULT_NAME, now) : comeBack(saved, now))
-    await update($, pet, () => loaded)
-    await $.store.set(STORE_KEY, loaded)
-    if (kept === null && saved === null) {
-      $.ui.toast('An egg appeared! It hatches in a couple of minutes. /pet')
-    } else if (kept === null && saved !== null && now - saved.lastSeenAt > 30 * MINUTE && stageOf(loaded) !== 'angel') {
-      await say($, "you're back! I missed you")
-    }
-    // Opens the day: the first session of one is paid.
-    await withWallet($, w => w)
-
-    $.clock.every(TICK_MS, () => {
-      void tick($)
-    })
-    $.clock.every(SYNC_MS, () => {
-      void sync($)
-    })
-    $.clock.every(FRAME_MS, () => {
-      void update($, frame, n => n + 1)
-    })
-
-    await $.command.register({
-      name: 'pet',
-      description: 'Your pixel pet: feed, play, clean, put to bed, shop for skins (/pet help)',
-      argumentHint: '[feed | snack | play | game | clean | meds | sleep | wake | coins | shop | buy | skin | upgrade | revive | help]',
-    })
+    await setUp($, e.cwd)
 
     return next(e)
   })
+
+  // A /resume or a /clear goes on in this process under a new session id with no session.start, and the
+  // host's $.state and the /pet command start over for it: without this the pet is gone until a restart.
+  on('classic.SessionStart', async ($, e, next) => {
+    if ((await read($, pet)) === null) {
+      await setUp($, e.cwd)
+    }
+
+    return next(e)
+  }).catch(($, e, next) => next(e))
 
   // Every tool Claude runs is a little show: successes teach it, errors upset it; a mess keeps the xp away.
   on('tool.call', async ($, e, next) => {
@@ -666,6 +734,7 @@ export const register: Register = (on, options) => {
     const isTyped = (e.origin.kind === 'composer' || e.origin.kind === 'bridge') && !e.text.trimStart().startsWith('/')
     if (isTyped) {
       await withWallet($, payPrompt)
+      await touch($)
     }
     const isJokeTime = isTyped && Math.random() < QUIP_CHANCE
     if (isJokeTime && (await $.store.get(JOKES_KEY)) !== false) {
@@ -702,6 +771,7 @@ export const register: Register = (on, options) => {
   })
 
   on('command.run', { command: 'pet' }, async ($, e) => {
+    await touch($)
     const [first = '', ...rest] = e.args.trim().split(/\s+/)
     const verb = first.toLowerCase()
     const name = rest.join(' ').slice(0, 20)
@@ -825,17 +895,19 @@ export const register: Register = (on, options) => {
     const isPlaying = (await read($, game)) !== null
     const stage = stageOf(current)
     const canAct = stage !== 'egg' && stage !== 'angel'
-    const run = (action: Action) => async () => {
-      await doAction($, action)
+    const press = (fn: () => Promise<unknown>) => async () => {
+      await touch($)
+      await fn()
     }
+    const run = (action: Action) => press(() => doAction($, action))
 
     return (
       <Box flexDirection="column">
         {screen(ui, await viewOf($, current), 'right')}
         {canAct && isPlaying && (
           <Box flexDirection="row" gap={1}>
-            <Button key="left" label="← Left" hotkey="l" onPress={async () => void (await guess($, 'left'))} />
-            <Button key="right" label="Right →" hotkey="r" onPress={async () => void (await guess($, 'right'))} />
+            <Button key="left" label="← Left" hotkey="l" onPress={press(() => guess($, 'left'))} />
+            <Button key="right" label="Right →" hotkey="r" onPress={press(() => guess($, 'right'))} />
           </Box>
         )}
         {canAct && !isPlaying && (
@@ -843,7 +915,7 @@ export const register: Register = (on, options) => {
             <Button key="feed" label="Feed" hotkey="f" onPress={run('feed')} />
             <Button key="snack" label="Snack" hotkey="s" onPress={run('snack')} />
             <Button key="play" label="Play" hotkey="p" onPress={run('play')} />
-            <Button key="game" label="Game" hotkey="g" onPress={async () => void (await startGame($))} />
+            <Button key="game" label="Game" hotkey="g" onPress={press(() => startGame($))} />
             <Button key="clean" label="Clean" hotkey="c" onPress={run('clean')} />
             <Button key="meds" label="Meds" hotkey="m" onPress={run('meds')} />
             <Button

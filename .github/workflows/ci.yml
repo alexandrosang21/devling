@@ -14,8 +14,14 @@ concurrency:
 
 jobs:
   check:
+    name: check (${{ matrix.claude }})
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        # The oldest Claude Code with mods, which the README promises, and the newest.
+        claude: ['2.1.287', 'latest']
     steps:
       - uses: actions/checkout@v5
 
@@ -26,10 +32,17 @@ jobs:
       # validate and test need no login, so this job has no secrets, also on pull requests from forks.
       # The type-check is left out: its typings come from loading the mod in a session.
       - name: Install Claude Code
-        run: npm install -g @anthropic-ai/claude-code
+        run: npm install -g @anthropic-ai/claude-code@${{ matrix.claude }}
 
       - name: Validate
         run: claude plugin validate --strict .
 
       - name: Test
         run: claude plugin test .
+
+      # The README's pictures come from the drawing code: redrawn here, they must match what is committed.
+      - name: Pictures are current
+        if: matrix.claude == 'latest'
+        run: |
+          npx -y tsx@4 scripts/pictures.ts
+          git diff --exit-code docs/

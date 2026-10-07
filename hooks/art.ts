@@ -83,21 +83,27 @@ export function actAt(act: Act | null, tick: number): { kind: Act['kind']; phase
   return phase >= 0 && phase < ACT_FRAMES ? { kind: act.kind, phase } : null
 }
 
-/** The pet at this frame, walking a lane `lane` columns wide. */
-export function sceneOf(p: Pet, tick: number, act: Act | null, lane = LANE): Scene {
+/**
+ * The pet at this frame, walking a lane `lane` columns wide. `dash` is how many steps a play dash has
+ * run: the walk sped up from where it stood, so it sets off without a jump.
+ */
+export function sceneOf(p: Pet, tick: number, act: Act | null, lane = LANE, dash: number | null = null): Scene {
   const stage = stageOf(p)
   const playing = actAt(act, tick)
   const isEyesOpen = !p.isAsleep && (stage === 'angel' || tick % 7 !== 0)
   const range = Math.max(0, lane - widthOf(p.skin, stage) - FX_WIDTH)
   const middle = Math.floor(range / 2)
+  const isDashing = dash !== null && stage !== 'egg' && stage !== 'angel' && !p.isAsleep
+  const step = isDashing ? tick + dash : tick
 
-  let x = pace(tick, range)
+  let x = pace(step, range)
   // Walking freely, it is headed left on the way back across the lane.
-  let isFacingLeft = range > 0 && tick % (2 * range) >= range
+  let isFacingLeft = range > 0 && step % (2 * range) >= range
   if (stage === 'egg') x = Math.min(range, 1 + (tick % 2))
+  else if (isDashing) x = pace(step, range)
   else if (playing?.kind === 'play') x = Math.max(0, Math.min(range, middle + (tick % 2 === 0 ? -1 : 1)))
   else if (p.isAsleep || p.isSick || playing !== null || stage === 'angel') x = Math.min(2, range)
-  if (x !== pace(tick, range)) isFacingLeft = false
+  if (x !== pace(step, range)) isFacingLeft = false
   const tint = p.isSick && stage !== 'angel' ? SICK_COLOR : null
   const sprite = halfBlocks(pixelsOf(p.skin, stage, { isEyesOpen, tick, isFacingLeft, tint }))
 
@@ -382,6 +388,30 @@ export function quipRequest(p: Pet, text: string, when: string, project: string,
       `<message>\n${text.slice(0, QUIP_INPUT_MAX)}\n</message>`,
     ].join('\n'),
   }
+}
+
+// The speech bubble's width. Two lines of it hold a whole joke and stand exactly as tall as the stats and
+// the pet, so the footer never grows, and it leaves the stats room in a terminal of ordinary width.
+export const BUBBLE_WIDTH = 30
+
+/** What the pet says, word-wrapped to at most two bubble lines; what does not fit ends in an ellipsis. */
+export function bubbleLines(text: string): string[] {
+  const cut = (line: string): string => (line.length <= BUBBLE_WIDTH ? line : `${line.slice(0, BUBBLE_WIDTH - 1)}…`)
+  const lines: string[] = []
+  for (const word of text.split(/\s+/).filter(part => part !== '')) {
+    const last = lines[lines.length - 1]
+    if (last !== undefined && last.length + 1 + word.length <= BUBBLE_WIDTH) {
+      lines[lines.length - 1] = `${last} ${word}`
+    } else {
+      lines.push(word)
+    }
+  }
+  const [first = '', second] = lines
+  if (second === undefined) {
+    return lines.map(cut)
+  }
+
+  return [cut(first), cut(lines.length > 2 ? `${second}…` : second)]
 }
 
 /** The model's joke as one bubble line: its first line, without wrapping quotes or control characters, cut to fit. */

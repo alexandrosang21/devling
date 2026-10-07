@@ -2,30 +2,23 @@
 
 A pixel pet that lives under your Claude Code prompt. It hatches from an egg, grows up as Claude works, gets hungry, sleeps, makes messes, catches a cold, and has opinions about your prompts. The work you get done with Claude earns coins, and coins buy it new looks, bigger hearts, or a way back if it ever flies off.
 
-<!-- TODO: add docs/screenshot.png (or a short GIF) of the footer, then show it here -->
-
 Devling is a Claude Code [mod](https://code.claude.com/docs/en/plugins/mods): a plugin of function hooks that draws in the terminal and adds a `/pet` command.
 
 ## What you see
 
 At the bottom right, under the prompt, one line of stats with the pet walking below it:
 
-```text
-🍖 ♥♥♥♡ 😊 ♥♥♥♥ 🔋 ▰▰▰▱▱ ⭐6 🪙 95
-          ▄▀▀▀▀▄
-          █▀██▀█
-          ▀▀▀▀▀▀
-```
+<p align="center"><img src="docs/footer.svg" alt="The Devling footer: a line of stats over a pixel pet walking under the Claude Code prompt, saying 'it is not a bug, it is a pet' in a speech bubble" width="671"></p>
 
 Food and joy in hearts, energy, level, and coins. The pet talks in a speech bubble beside it. `/pet band` moves it above the prompt, with buttons.
 
 ## How it lives
 
 - **Egg.** A new pet starts as an egg and hatches a couple of minutes later.
-- **Needs.** Food, joy and energy drop a little every minute while a Claude Code session is open. Time away counts too, but only up to a cap: come back after a weekend and it is hungry, rested and happy to see you.
+- **Needs.** Food, joy and energy drop a little every minute while a Claude Code session is open. Time away counts too, but only up to a cap: come back after a weekend and it is hungry, rested and happy to see you. An hour with no prompt typed and no `/pet` counts as time away as well, so a session left open overnight does it no harm.
 - **Growing up.** Every tool call Claude runs and every finished task earns experience. It goes from baby to child, teen and adult. A pet that was neglected too often grows into a grumpy adult.
 - **Mess.** It poops after meals and now and then, the younger the more often. While there is poop around it earns no experience at all, and it will ask you to clean up. Leave the mess too long and it can get sick.
-- **Leaving.** Neglected for twelve hours of open sessions in a row, it flies off to the pixel stars. `/pet revive` brings it back, or `/pet new` gives you a new egg.
+- **Leaving.** Neglected for twelve hours in a row while you are around, it flies off to the pixel stars. `/pet revive` brings it back, or `/pet new` gives you a new egg.
 - **Talking.** It reacts to what Claude does (shell commands, edits, errors, long tasks finishing) in its bubble.
 
 Every open session shows the same pet. They share one save and pick up each other's changes within about ten seconds, alerts included.
@@ -50,6 +43,8 @@ A typical working day brings in about 200. `/pet shop` lists what they buy:
 - **Skins.** Seven species, each with its own baby, child, teen and adult drawings: devling (free), chick, cat, frog, ghost, blob and cube, from 150 to 500 coins. A skin changes the look only: the pet keeps its name, level and stage. Bought skins are yours for good; switch between them for free.
 - **Hearts.** A new pet holds three hearts of food and three of joy. A fourth costs 150 and a fifth 300. Each heart holds 25 points more, so the bar lasts longer between meals or games.
 - **Revive.** 200 coins bring a pet back from the pixel stars at the stage and level it left with.
+
+<p align="center"><img src="docs/species.svg" alt="Every Devling species at every stage, from egg to angel: devling, chick, cat, frog, ghost, blob and cube" width="770"></p>
 
 ## Requirements
 

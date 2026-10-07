@@ -2,9 +2,9 @@ import { describe, expect, mock, test } from 'claude-code/testing'
 import type { Engine, MockClock } from 'claude-code/testing'
 import type { On } from 'claude-code'
 
-import { DONE_LINES, NEW_TASK_LINES, cleanQuip, sceneOf, xpBar } from '../hooks/art'
+import { DONE_LINES, NEW_TASK_LINES, bubbleLines, cleanQuip, sceneOf, xpBar } from '../hooks/art'
 import { dayOf } from '../hooks/economy'
-import { egg, live, revive } from '../hooks/life'
+import { active, egg, live, revive } from '../hooks/life'
 import type { Pet, Wallet } from '../types'
 
 const MINUTE = 60_000
@@ -122,11 +122,37 @@ describe('life', () => {
   test('a neglected pet flies off to the pixel stars after twelve hours', () => {
     let p: Pet = { ...egg('Mochi', 0), hatchedAt: 0, hunger: 0, happiness: 0 }
     for (let minute = 1; minute <= 12 * 60; minute++) {
-      p = live(p, minute * MINUTE, () => 0.99).pet
+      // Someone is about all along, typing away, and never once looks after it.
+      p = live({ ...p, lastActiveAt: minute * MINUTE }, minute * MINUTE, () => 0.99).pet
     }
 
     expect(p.leftAt).not.toBeNull()
     expect(p.careMistakes).toBe(1)
+  })
+
+  test('an hour with nobody about is time away: it never starves or leaves, and loses forty at most', () => {
+    let p: Pet = { ...egg('Mochi', 0), hatchedAt: 0, hunger: 100, foodHearts: 4 }
+    for (let minute = 1; minute <= 24 * 60; minute++) {
+      p = live(p, minute * MINUTE, () => 0.99).pet
+    }
+
+    // 59 minutes lived as usual, at half a point of food a minute, then nothing.
+    expect(p.hunger).toBe(70.5)
+    expect(p.neglect).toBe(0)
+    expect(p.leftAt).toBeNull()
+
+    const back = active(p, 24 * 60 * MINUTE)
+    expect(back.hunger).toBe(30.5)
+    expect(back.lastActiveAt).toBe(24 * 60 * MINUTE)
+  })
+
+  test('a session left open with nobody about stops living its minutes after an hour', async ($, on) => {
+    const clock = await start($, on, { pet: oldPet({ hunger: 90 }) })
+    await clock.advance(65 * MINUTE)
+
+    // 59 minutes lived at 0.4 energy a minute, then none: the five idle minutes come back as time away,
+    // which leaves energy be. Lived through, they would have left 74%.
+    expect(await pet($)).toMatch(/🔋 \S+ 76%/)
   })
 
   test('revive refuses what is no pet', () => {
@@ -198,13 +224,17 @@ describe('care', () => {
   test('what another open session does shows here within ten seconds', async ($, on) => {
     const store = sharedStore(on, { pet: oldPet({ hunger: 30 }) })
     const clock = await start($, on, null)
+    // Watched in the footer: a /pet would sync at once, as someone being about.
+    const ui = await $.ui.mount({ plugin: 'devling', surface: 'terminal', component: 'SessionMode', props: { modes: [] } })
     await clock.advance(1_000)
     store.set('pet', { ...(store.get('pet') as Pet), hunger: 60, lastSeenAt: NOW + 1_000 })
-    expect(await pet($)).toMatch(/🍖 \S+ 30%/)
+    // Food at 30 fills two of its four hearts, at 60 three, as joy at 60 does.
+    expect(await ui.find({ type: 'Text', text: /^♥♥$/ })).toBeDefined()
 
     await clock.advance(9_000)
 
-    expect(await pet($)).toMatch(/🍖 \S+ 60%/)
+    expect(await ui.find({ type: 'Text', text: /^♥♥$/ })).toBeUndefined()
+    await ui.unmount()
   })
 
   test('an alert raised in another open session shows here too', async ($, on) => {
@@ -250,6 +280,24 @@ describe('care', () => {
 
     expect(await pet($)).toContain('An egg')
   })
+
+  test('a session a /resume starts in the same process, with no session.start, still shows the pet', async ($, on) => {
+    mock.clock(on, { now: NOW })
+    mock.store(on, { pet: oldPet({ hunger: 90 }) })
+    on('command.register', ($, e) => ({ value: { command: e.name } }))
+    on('classic.SessionStart', () => ({}))
+    on('ui.render', ($, e) => {
+      const { Box } = $.ui.resolve(e)
+
+      return <Box />
+    })
+    await $.classic.SessionStart({ source: 'resume' })
+
+    expect(await pet($)).toContain('Biscuit · baby')
+    const ui = await $.ui.mount({ plugin: 'devling', surface: 'terminal', component: 'SessionMode', props: { modes: [] } })
+    expect(await ui.find({ type: 'Text', text: /♥/ })).toBeDefined()
+    await ui.unmount()
+  })
 })
 
 const anyOf = (lines: readonly string[]) => new RegExp(lines.map(line => line.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|'))
@@ -266,6 +314,15 @@ async function typeUntilJoke($: Engine, clock: MockClock, calls: () => number): 
 
 describe('jokes', () => {
   const USAGE = { input_tokens: 1, output_tokens: 1, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 }
+
+  test('what it says wraps to two bubble lines at most, and what does not fit ends in an ellipsis', () => {
+    expect(bubbleLines('nom nom nom!')).toEqual(['nom nom nom!'])
+    expect(bubbleLines("I don't feel well... /pet meds")).toEqual(["I don't feel well... /pet meds"])
+    expect(bubbleLines('the client wants the button bigger, and bluer, and yesterday')).toEqual([
+      'the client wants the button',
+      'bigger, and bluer, and…',
+    ])
+  })
 
   test('a joke is cut to one bubble line', () => {
     expect(cleanQuip('  "a bug? I ate it already"\nand more')).toBe('a bug? I ate it already')
@@ -291,7 +348,8 @@ describe('jokes', () => {
 
     await typeUntilJoke($, clock, () => calls)
     expect(calls).toBe(2)
-    expect(await ui.find({ type: 'Text', text: anyOf(NEW_TASK_LINES) })).toBeDefined()
+    // A stock line longer than the bubble wraps, and its first line is what shows on top.
+    expect(await ui.find({ type: 'Text', text: anyOf(NEW_TASK_LINES.map(line => bubbleLines(line)[0] ?? line)) })).toBeDefined()
     await ui.unmount()
   })
 
@@ -383,6 +441,24 @@ describe('drawing', () => {
 
     expect(await pet($)).toMatch(/🍖 \S+ 90%/)
   })
+
+  test('playing, it dashes along its lane from where it stood, faster than it walks', async ($, on) => {
+    const adult: Pet = { ...egg('Mochi', 0), hatchedAt: 0, xp: 500 }
+    const playing = { kind: 'play' as const, startFrame: 3 }
+    // A lane of 34 leaves an adult 21 columns to run: it sets off at its walking place and turns at the edge.
+    expect(sceneOf(adult, 3, null, 34).x).toBe(3)
+    expect(sceneOf(adult, 3, playing, 34, 0).x).toBe(3)
+    expect(sceneOf(adult, 3, playing, 34, 10).x).toBe(13)
+    expect(sceneOf(adult, 3, playing, 34, 25).x).toBe(14)
+    const frog: Pet = { ...adult, skin: 'frog' }
+    expect(sceneOf(frog, 3, playing, 34, 25).sprite).not.toEqual(sceneOf(frog, 3, playing, 34, 10).sprite)
+
+    const clock = await start($, on, { pet: oldPet({ hunger: 80 }) })
+    expect(await pet($, 'play')).toContain('wheee')
+    await clock.advance(7_000)
+
+    expect(await pet($)).toContain('Biscuit')
+  })
 })
 
 // A wallet already open for the test's day, so no first-of-day bonus muddles the sums.
@@ -413,7 +489,8 @@ describe('poop', () => {
       let p: Pet = { ...egg('Mochi', 0), hatchedAt: 0, xp }
       let count = 0
       for (let minute = 1; minute <= 2000; minute++) {
-        const lived = live({ ...p, energy: 100, hunger: 90, happiness: 90, poops: 0 }, minute * MINUTE, roll)
+        const at = minute * MINUTE
+        const lived = live({ ...p, energy: 100, hunger: 90, happiness: 90, poops: 0, lastActiveAt: at }, at, roll)
         count += lived.events.filter(event => event === 'pooped').length
         p = lived.pet
       }
