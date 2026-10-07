@@ -1,0 +1,18 @@
+# Written by Claude Code each time it loads the mod from a folder you own:
+# this build's API typings plus the MCP tools connected on your machine.
+# Build-specific, about 1 MB, and the MCP file names your own servers.
+# Load the mod once (claude --plugin-dir .) to get them back.
+.claude-plugin/types/
+
+# OS and editor clutter
+.DS_Store
+Thumbs.db
+desktop.ini
+.vscode/
+.idea/
+*.swp
+
+# In case someone runs npm or tsc with emit by hand
+node_modules/
+*.log
+dist/

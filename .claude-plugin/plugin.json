@@ -1,0 +1,23 @@
+{
+  "name": "devling",
+  "displayName": "Devling",
+  "version": "0.3.0",
+  "description": "A pixel pet under your Claude Code prompt: it hatches, grows up as Claude works, earns coins from your finished tasks and wears the skins you buy with them",
+  "author": {
+    "name": "Alexander Angelov",
+    "url": "https://github.com/alexandrosang21"
+  },
+  "homepage": "https://github.com/alexandrosang21/devling",
+  "repository": "https://github.com/alexandrosang21/devling",
+  "license": "MIT",
+  "keywords": ["pet", "virtual-pet", "pixel-art", "game", "mod"],
+  "types": "./types/index.d.ts",
+  "userConfig": {
+    "about": {
+      "type": "string",
+      "title": "About your work",
+      "description": "What you work on, in a sentence, so the pet's jokes fit it (for example: Laravel APIs for clients who change their minds). Empty keeps the jokes about developer life in general.",
+      "default": ""
+    }
+  }
+}
