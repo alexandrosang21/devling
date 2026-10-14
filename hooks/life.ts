@@ -336,3 +336,30 @@ export function perform(p: Pet, action: Action, now: number, roll: Roll): { pet:
       return { pet: { ...p, isAsleep: false, happiness: fill(p.happiness - 10) }, line: 'five more minutes...', act: null }
   }
 }
+
+// The sitter steps in well under the alerts at 25, so the person hears first and has about half an hour to
+// answer, and still before neglect counts: food or joy at zero, sick, or three poops. One poop it leaves to
+// the person, with the xp it holds back.
+const SITTER_BELOW = 10
+const SITTER_POOPS = 2
+
+/** The one care the sitter gives this minute, the most urgent first; none to an egg, an angel or a sleeper. */
+export function sitterAction(p: Pet): Action | null {
+  const stage = stageOf(p)
+  if (stage === 'egg' || stage === 'angel' || p.isAsleep) return null
+  if (p.isSick) return 'meds'
+  if (p.poops >= SITTER_POOPS) return 'clean'
+  if (p.hunger < SITTER_BELOW) return 'feed'
+  if (p.happiness < SITTER_BELOW) return 'snack'
+
+  return null
+}
+
+/** The sitter's care: what the person's would do, without the xp. Null when the pet needs none. */
+export function sit(p: Pet, now: number, roll: Roll): { pet: Pet; act: ActKind | null } | null {
+  const action = sitterAction(p)
+  if (action === null) return null
+  const done = perform(p, action, now, roll)
+
+  return { pet: { ...done.pet, xp: p.xp }, act: done.act }
+}

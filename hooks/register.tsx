@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { ElementTable, EngineInterface, Register, Timer } from 'claude-code'
 
-import type { Act, ActKind, Pet, Place, Speech, Wallet } from '../types'
+import type { Act, ActKind, Pet, Place, Sitter, Speech, Wallet } from '../types'
 import {
   DONE_LINES,
   IDLE_LINES,
@@ -21,7 +21,7 @@ import {
   toolLine,
 } from './art'
 import type { Row, Segment } from './art'
-import { EARN, REVIVE_PRICE, heartPrice, openDay, pay, payPrompt, spend, taskPay, walletOf } from './economy'
+import { EARN, REVIVE_PRICE, SITTER_FEE, SITTER_PRICE, heartPrice, openDay, pay, payPrompt, spend, taskPay, walletOf } from './economy'
 import {
   HEART,
   MAX_HEARTS,
@@ -40,6 +40,8 @@ import {
   newer,
   perform,
   revive,
+  sit,
+  sitterAction,
   stageOf,
 } from './life'
 import type { Action, LifeEvent } from './life'
@@ -145,6 +147,9 @@ const HELP = [
   '  /pet upgrade food    one more food heart, up to 5: longer between meals',
   '  /pet upgrade joy     one more joy heart, up to 5: longer between games',
   `  /pet revive          bring it back from the pixel stars (${REVIVE_PRICE} coins)`,
+  '  /pet buy sitter      a robot that steps in when food or joy drops under 10, at two poops or',
+  `                       when it is sick: ${SITTER_PRICE} coins once, then ${SITTER_FEE} a care, and no xp from it`,
+  '  /pet sitter on|off   put the sitter to work, or give it a break',
   'Settings',
   '  /pet name <name>     rename it',
   '  /pet footer | band   bottom right, or above the prompt with buttons',
@@ -374,7 +379,7 @@ async function setUp($: EngineInterface, cwd: string): Promise<void> {
   await $.command.register({
     name: 'pet',
     description: 'Your pixel pet: feed, play, clean, put to bed, shop for skins (/pet help)',
-    argumentHint: '[feed | snack | play | game | clean | meds | sleep | wake | coins | shop | buy | skin | upgrade | revive | help]',
+    argumentHint: '[feed | snack | play | game | clean | meds | sleep | wake | coins | shop | buy | skin | upgrade | revive | sitter | help]',
   })
 }
 
@@ -417,9 +422,43 @@ async function tick($: EngineInterface): Promise<void> {
       return
     }
     await tell($, out.events, changed.pet, changed.hasGrown)
+    await babysit($)
   }
   if (out.events.length === 0) {
     await chatter($, pick(IDLE_LINES, Math.random), 0.12)
+  }
+}
+
+/**
+ * The sitter's minute, in the session that lived it: one care when the pet needs it and the coins cover the
+ * fee. The care is picked on the pet as change() finds it, so a meal another session just gave is never
+ * given twice, and paid only once given. It plays the care's act and says nothing.
+ */
+async function babysit($: EngineInterface): Promise<void> {
+  const purse = await read($, wallet)
+  const current = await read($, pet)
+  if (purse === null || purse.sitter !== 'on' || purse.coins < SITTER_FEE || current === null || sitterAction(current) === null) {
+    return
+  }
+  const now = await $.clock.now()
+  const out = { isDone: false, act: null as ActKind | null }
+  const changed = await change($, p => {
+    const care = sit(p, now, Math.random)
+    if (care === null) {
+      return p
+    }
+    out.isDone = true
+    out.act = care.act
+
+    return care.pet
+  })
+  if (changed === null || !out.isDone) {
+    return
+  }
+  // Spent elsewhere in the same breath, the coins fall short: that one care was on the house.
+  await withWallet($, w => spend(w, SITTER_FEE))
+  if (out.act !== null) {
+    await startAct($, out.act)
   }
 }
 
@@ -600,6 +639,53 @@ async function upgrade($: EngineInterface, bar: 'food' | 'joy'): Promise<string>
   return `${current.name} has ${hearts + 1} ${bar} hearts now, ${after.coins} 🪙 left.`
 }
 
+/** Hires the sitter, once and for good. */
+async function hire($: EngineInterface): Promise<string> {
+  const out = { refusal: '' }
+  const after = await withWallet($, w => {
+    if (w.sitter !== 'none') {
+      out.refusal = 'The sitter already works for you. /pet sitter on | off'
+
+      return null
+    }
+    const paid = spend(w, SITTER_PRICE)
+    if (paid === null) {
+      out.refusal = `The sitter costs ${SITTER_PRICE} 🪙 and you have ${w.coins}: ${SITTER_PRICE - w.coins} to go.`
+
+      return null
+    }
+
+    return { ...paid, sitter: 'on' }
+  })
+  if (after === null) {
+    return out.refusal
+  }
+  await say($, 'a robot friend!')
+
+  return `Hired the sitter for ${SITTER_PRICE} 🪙, ${after.coins} left. When food or joy drops under 10, at two poops or when it is sick, it steps in for ${SITTER_FEE} 🪙 a care.`
+}
+
+/** Puts the hired sitter to work or gives it a break, saved for every session; with no choice, says which it is on. */
+async function setSitter($: EngineInterface, choice: string): Promise<string> {
+  const wanted: Sitter | null = choice === 'on' || choice === 'off' ? choice : null
+  const out = { was: 'none' as Sitter }
+  const after = await withWallet($, w => {
+    out.was = w.sitter
+
+    return w.sitter === 'none' || wanted === null ? null : { ...w, sitter: wanted }
+  })
+  if (out.was === 'none') {
+    return `No sitter yet: /pet buy sitter (${SITTER_PRICE} 🪙).`
+  }
+  if (after === null) {
+    return `The sitter is ${out.was === 'on' ? 'on duty' : 'on a break'}. /pet sitter on | off`
+  }
+
+  return after.sitter === 'on'
+    ? `Sitter on: when food or joy drops under 10, at two poops or when it is sick, it steps in for ${SITTER_FEE} 🪙 a care.`
+    : 'Sitter off: the pet is all yours. /pet sitter on puts it back to work.'
+}
+
 /** Pays to bring a pet back from the stars at the stage and level it left with. */
 async function bringBackPet($: EngineInterface): Promise<string> {
   const current = await read($, pet)
@@ -627,16 +713,27 @@ async function bringBackPet($: EngineInterface): Promise<string> {
   return `${changed?.pet.name ?? current.name} is back, ${after.coins} 🪙 left.`
 }
 
-type View = { pet: Pet; tick: number; act: Act | null; dash: number | null; speech: Speech | null; coins: number | null }
+type View = {
+  pet: Pet
+  tick: number
+  act: Act | null
+  dash: number | null
+  speech: Speech | null
+  coins: number | null
+  sitter: Sitter
+}
 
 async function viewOf($: EngineInterface, current: Pet): Promise<View> {
+  const purse = await read($, wallet)
+
   return {
     pet: current,
     tick: await read($, frame),
     act: await read($, act),
     dash: await read($, dash),
     speech: await read($, speech),
-    coins: (await read($, wallet))?.coins ?? null,
+    coins: purse?.coins ?? null,
+    sitter: purse?.sitter ?? 'none',
   }
 }
 
@@ -655,7 +752,7 @@ const textProps = (segment: Segment) => ({
  */
 function screen(ui: ElementTable, view: View, side: 'left' | 'right') {
   const { Box, Text } = ui
-  const line = statsLine(view.pet, view.coins)
+  const line = statsLine(view.pet, view.coins, view.sitter)
   // Each poop is three columns and a space, the gap before them included.
   const poopColumns = stageOf(view.pet) === 'angel' ? 0 : view.pet.poops * 4
   const lane = Math.max(LANE, columnsOf(line) - poopColumns)
@@ -796,20 +893,23 @@ export const register: Register = (on, options) => {
     switch (verb) {
       case '': {
         const current = await read($, pet)
-        const coins = (await withWallet($, w => w))?.coins ?? 0
+        const w = (await withWallet($, purse => purse)) ?? walletOf(undefined)
 
-        return { text: current === null ? NO_PET : statusBlock(current, await $.clock.now(), coins) }
+        return { text: current === null ? NO_PET : statusBlock(current, await $.clock.now(), w.coins, w.sitter) }
       }
       case 'coins':
         return { text: await coinsLine($) }
       case 'shop': {
         const w = (await withWallet($, current => current)) ?? walletOf(undefined)
 
-        return { text: shopBlock(w.coins, w.owned, await read($, pet), SKIN_IDS) }
+        return { text: shopBlock(w.coins, w.owned, await read($, pet), SKIN_IDS, w.sitter) }
       }
       case 'buy':
       case 'skin': {
         const id = (rest[0] ?? '').toLowerCase()
+        if (verb === 'buy' && id === 'sitter') {
+          return { text: await hire($) }
+        }
         if (!isSkin(id)) {
           return { text: `${id === '' ? 'Which skin?' : `No skin called "${id}".`} One of: ${SKIN_IDS.join(', ')}. /pet shop shows them.` }
         }
@@ -860,6 +960,8 @@ export const register: Register = (on, options) => {
         await update($, isHidden, () => false)
 
         return { text: 'Pet is back.' }
+      case 'sitter':
+        return { text: await setSitter($, (rest[0] ?? '').toLowerCase()) }
       case 'jokes': {
         const choice = (rest[0] ?? '').toLowerCase()
         if (choice !== 'on' && choice !== 'off') {

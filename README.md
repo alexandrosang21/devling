@@ -18,7 +18,7 @@ Food and joy in hearts, energy, level, and coins. The pet talks in a speech bubb
 - **Needs.** Food, joy and energy drop a little every minute while a Claude Code session is open. Time away counts too, but only up to a cap: come back after a weekend and it is hungry, rested and happy to see you. An hour with no prompt typed and no `/pet` counts as time away as well, so a session left open overnight does it no harm.
 - **Growing up.** Every tool call Claude runs and every finished task earns experience. It goes from baby to child, teen and adult. A pet that was neglected too often grows into a grumpy adult.
 - **Mess.** It poops after meals and now and then, the younger the more often. While there is poop around it earns no experience at all, and it will ask you to clean up. Leave the mess too long and it can get sick.
-- **Leaving.** Neglected for twelve hours in a row while you are around, it flies off to the pixel stars. `/pet revive` brings it back, or `/pet new` gives you a new egg.
+- **Leaving.** Neglected for twelve hours in a row while you are around, it flies off to the pixel stars. `/pet revive` brings it back, or `/pet new` gives you a new egg. A hired sitter keeps that from happening while your coins last.
 - **Talking.** It reacts to what Claude does (shell commands, edits, errors, long tasks finishing) in its bubble.
 
 Every open session shows the same pet. They share one save and pick up each other's changes within about ten seconds, alerts included.
@@ -43,6 +43,7 @@ A typical working day brings in about 200. `/pet shop` lists what they buy:
 - **Skins.** Seven species, each with its own baby, child, teen and adult drawings: devling (free), chick, cat, frog, ghost, blob and cube, from 150 to 500 coins. A skin changes the look only: the pet keeps its name, level and stage. Bought skins are yours for good; switch between them for free.
 - **Hearts.** A new pet holds three hearts of food and three of joy. A fourth costs 150 and a fifth 300. Each heart holds 25 points more, so the bar lasts longer between meals or games.
 - **Revive.** 200 coins bring a pet back from the pixel stars at the stage and level it left with.
+- **Sitter.** 500 coins hire a little robot for the days you are too busy. When food or joy drops under 10, at two poops, or when the pet is sick, it steps in for 5 coins a care. It never plays, earns the pet no experience and leaves a single poop to you. Its 🤖 sits beside your coins in the footer while it is on, dim when they no longer cover its fee. `/pet sitter off` gives it a break, `/pet sitter on` puts it back to work.
 
 <p align="center"><img src="docs/species.svg" alt="Every Devling species at every stage, from egg to angel: devling, chick, cat, frog, ghost, blob and cube" width="770"></p>
 
@@ -85,11 +86,13 @@ A mod runs with your permissions. To see what this one hooks and calls before yo
 | `/pet meds` | Medicine when it is sick |
 | `/pet sleep`, `/pet wake` | Lights off: energy refills at 2.5 a minute, empty to full in 40 minutes, then it wakes up. Waking it early costs some joy |
 | `/pet coins` | Your coins, what came in today, days in a row |
-| `/pet shop` | Skins and hearts, what they cost, what you own |
+| `/pet shop` | Skins, hearts and the sitter, what they cost, what you own |
 | `/pet buy <skin>` | Buys a skin and puts it on |
 | `/pet skin <skin>` | Puts on a skin you own |
 | `/pet upgrade food`, `/pet upgrade joy` | One more heart, up to five |
 | `/pet revive` | Brings it back from the pixel stars for 200 coins |
+| `/pet buy sitter` | Hires the sitter for 500 coins (see above) |
+| `/pet sitter on`, `/pet sitter off` | Puts the sitter to work, or gives it a break |
 | `/pet name <name>` | Renames it |
 | `/pet footer` | Draws it at the bottom right, under the prompt (the default) |
 | `/pet band` | Draws it above the prompt, with buttons |
@@ -124,7 +127,7 @@ By default the jokes are about developer life in general. To make them about wha
 
 ## Your data
 
-- The pet and your coins are saved by Claude Code's plugin store, in a JSON file under `~/.claude/plugins/store/` whose name starts with `devling_`. It holds the pet, your wallet (coins, skins owned, today's counters, the streak), the time of the last minute it lived, and your jokes setting.
+- The pet and your coins are saved by Claude Code's plugin store, in a JSON file under `~/.claude/plugins/store/` whose name starts with `devling_`. It holds the pet, your wallet (coins, skins owned, the sitter and whether it is on, today's counters, the streak), the time of the last minute it lived, and your jokes setting.
 - Where it is drawn (footer or band) and whether it is hidden are kept for the current session only.
 - Nothing is sent anywhere except the joke call described above. There is no telemetry.
 

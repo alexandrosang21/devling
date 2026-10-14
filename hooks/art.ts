@@ -1,5 +1,5 @@
-import type { Act, Pet } from '../types'
-import { heartPrice } from './economy'
+import type { Act, Pet, Sitter } from '../types'
+import { SITTER_FEE, SITTER_PRICE, heartPrice } from './economy'
 import { HEART, MAX_HEARTS, foodMax, joyMax, levelOf, needsAttention, stageOf, xpForLevel } from './life'
 import type { Roll } from './life'
 import { DEFAULT_SKIN, pixelsOf, shapeOf, skinOf, widthOf } from './skins'
@@ -146,6 +146,7 @@ const FOOD = '🍖'
 const JOY = '😊'
 const ENERGY = '🔋'
 const LEVEL = '⭐'
+const SITTER = '🤖'
 
 const ENERGY_PIPS = 5
 
@@ -195,9 +196,10 @@ export const columnsOf = (row: Row): number =>
 /**
  * The one line of stats under the pet. No name, which is for when you talk to it, no stage, which its
  * drawing shows, and no mood word: the hearts and the battery show that, and sleep and sickness have their
- * own marks. The coins close the line, so each one earned shows as it comes in.
+ * own marks. The coins close the line, so each one earned shows as it comes in, and the sitter's mark
+ * stands beside them while it is on, dim when they no longer cover its fee.
  */
-export function statsLine(p: Pet, coins: number | null): Row {
+export function statsLine(p: Pet, coins: number | null, sitter: Sitter = 'none'): Row {
   const stage = stageOf(p)
   // One space between groups: the emoji already carry some air of their own in most terminal fonts.
   const purse: Row = coins === null ? [] : [{ text: ` 🪙 ${coins}`, color: COIN_COLOR }]
@@ -207,6 +209,7 @@ export function statsLine(p: Pet, coins: number | null): Row {
   if (stage === 'egg') {
     return [{ text: 'an egg · it wiggles! hatching soon...', isDim: true }, ...purse]
   }
+  const sitterMark: Row = sitter === 'on' ? [{ text: ` ${SITTER}`, isDim: coins !== null && coins < SITTER_FEE }] : []
   const flags: Row = []
   if (p.isAsleep) flags.push({ text: ' zZ', color: 'subtle' })
   if (p.isSick) flags.push({ text: ' ✚ sick', color: 'error' })
@@ -222,6 +225,7 @@ export function statsLine(p: Pet, coins: number | null): Row {
     { text: ` ${LEVEL}` },
     { text: `${levelOf(p.xp)}`, isDim: true },
     ...purse,
+    ...sitterMark,
     ...flags,
   ]
 }
@@ -232,8 +236,8 @@ function ageOf(p: Pet, now: number): string {
   return days === 0 ? 'born today' : `${days} day${days === 1 ? '' : 's'} old`
 }
 
-/** What `/pet` prints: the pet itself, then its numbers, its skin and the coins. */
-export function statusBlock(p: Pet, now: number, coins: number): string {
+/** What `/pet` prints: the pet itself, then its numbers, its skin, the coins and the sitter. */
+export function statusBlock(p: Pet, now: number, coins: number, sitter: Sitter = 'none'): string {
   const stage = stageOf(p)
   const sprite = shapeOf(p.skin, stage)
   const level = levelOf(p.xp)
@@ -257,16 +261,17 @@ export function statusBlock(p: Pet, now: number, coins: number): string {
   if (p.poops > 0 && stage !== 'angel') {
     block.push('💩 No xp until the poop is gone: /pet clean')
   }
-  block.push(`${p.skin} skin · 🪙 ${coins} coins · /pet shop`)
+  const duty = sitter === 'on' ? ` · ${SITTER} sitter on duty` : sitter === 'off' ? ` · ${SITTER} sitter on a break` : ''
+  block.push(`${p.skin} skin · 🪙 ${coins} coins${duty} · /pet shop`)
 
   return block.join('\n')
 }
 
 /**
  * What `/pet shop` prints: the coins, every skin with its price and whether it is owned or worn, the pet's
- * hearts and what the next one costs, and how coins are earned.
+ * hearts and what the next one costs, the sitter, and how coins are earned.
  */
-export function shopBlock(coins: number, owned: readonly string[], p: Pet | null, ids: readonly string[]): string {
+export function shopBlock(coins: number, owned: readonly string[], p: Pet | null, ids: readonly string[], sitter: Sitter = 'none'): string {
   const wearing = p?.skin ?? DEFAULT_SKIN
   const name = Math.max(...ids.map(id => id.length))
   const rows = ids.map(id => {
@@ -294,11 +299,24 @@ export function shopBlock(coins: number, owned: readonly string[], p: Pet | null
   }
   const heartRows =
     p === null ? [] : ['Hearts, each one 25 points more between meals or games:', heartRow(FOOD, 'food', p.foodHearts), heartRow(JOY, 'joy', p.joyHearts)]
+  const hiring =
+    sitter === 'on'
+      ? 'hired, on duty · /pet sitter off'
+      : sitter === 'off'
+        ? 'hired, on a break · /pet sitter on'
+        : coins >= SITTER_PRICE
+          ? '/pet buy sitter'
+          : `${SITTER_PRICE - coins} 🪙 to go`
+  const sitterRows = [
+    `A sitter for busy days: it feeds, cleans and doctors it when you don't, ${SITTER_FEE} 🪙 a care, no xp:`,
+    `  ${SITTER} sitter  ${SITTER_PRICE} 🪙 once · ${hiring}`,
+  ]
 
   return [
     `🪙 ${coins} coins`,
     ...rows,
     ...heartRows,
+    ...sitterRows,
     'Coins come from work: +1 a typed prompt (50 a day), +3 a finished task (+5 more past a minute,',
     '+10 more past five), +10 a day\'s first session, +50 every 7 days in a row, +20 a level, +50 a new stage.',
   ].join('\n')
@@ -353,8 +371,6 @@ export const DONE_LINES = [
   'that was a journey',
 ]
 
-// A joke fits the speech bubble; the model is asked for less, the cut is for when it overshoots.
-const QUIP_MAX = 48
 const QUIP_INPUT_MAX = 600
 
 /**
@@ -414,15 +430,17 @@ export function bubbleLines(text: string): string[] {
   return [cut(first), cut(lines.length > 2 ? `${second}…` : second)]
 }
 
-/** The model's joke as one bubble line: its first line, without wrapping quotes or control characters, cut to fit. */
+/**
+ * The model's joke as one line: its first, without wrapping quotes or control characters. It is not cut
+ * here: bubbleLines() wraps it to the bubble's two lines and cuts only what does not fit them, so a joke
+ * that overshoots the words asked for still shows whole while it fits.
+ */
 export function cleanQuip(raw: string): string {
-  const line = (raw.trim().split('\n')[0] ?? '')
+  return (raw.trim().split('\n')[0] ?? '')
     .replace(/[\u0000-\u001f\u007f]/g, '')
     .replace(/^["'“”«»]+|["'“”«»]+$/g, '')
     .replace(/\s+/g, ' ')
     .trim()
-
-  return line.length <= QUIP_MAX ? line : `${line.slice(0, QUIP_MAX - 1).trimEnd()}…`
 }
 
 export function toolLine(tool: string, hasFailed: boolean, roll: Roll): string {

@@ -19,6 +19,9 @@ export const EARN = {
 } as const
 
 export const REVIVE_PRICE = 200
+/** The sitter is hired once, then paid for each care it gives: coins earned at work end up as meals. */
+export const SITTER_PRICE = 500
+export const SITTER_FEE = 5
 
 /** What one more food or joy heart costs, by the heart it would be: the fourth, then the fifth. */
 export const heartPrice = (heart: number): number => (heart <= 4 ? 150 : 300)
@@ -40,6 +43,7 @@ export function walletOf(value: unknown): Wallet {
     prompts: count(saved.prompts),
     today: count(saved.today),
     streak: count(saved.streak),
+    sitter: saved.sitter === 'on' || saved.sitter === 'off' ? saved.sitter : 'none',
   }
 }
 

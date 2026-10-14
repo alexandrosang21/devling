@@ -4,7 +4,7 @@ import type { On } from 'claude-code'
 
 import { DONE_LINES, NEW_TASK_LINES, bubbleLines, cleanQuip, sceneOf, xpBar } from '../hooks/art'
 import { dayOf } from '../hooks/economy'
-import { active, egg, live, revive } from '../hooks/life'
+import { active, egg, live, revive, sitterAction } from '../hooks/life'
 import type { Pet, Wallet } from '../types'
 
 const MINUTE = 60_000
@@ -342,9 +342,12 @@ describe('jokes', () => {
     ])
   })
 
-  test('a joke is cut to one bubble line', () => {
+  test('a joke is cleaned to one line and fills the bubble before anything is cut', () => {
     expect(cleanQuip('  "a bug? I ate it already"\nand more')).toBe('a bug? I ate it already')
-    expect(cleanQuip('x'.repeat(60))).toHaveLength(48)
+    expect(bubbleLines(cleanQuip("Ghosted by a coworker, now I'm ghosting my own code"))).toEqual([
+      "Ghosted by a coworker, now I'm",
+      'ghosting my own code',
+    ])
   })
 
   test('a typed prompt gets a joke from the small model, or the stock cheer without one', async ($, on) => {
@@ -487,6 +490,7 @@ const walletToday = (overrides: Partial<Wallet>): Wallet => ({
   prompts: 0,
   today: 0,
   streak: 1,
+  sitter: 'none',
   ...overrides,
 })
 
@@ -637,6 +641,70 @@ describe('hearts', () => {
     const ui = await $.ui.mount({ plugin: 'devling', surface: 'terminal', component: 'SessionMode', props: { modes: [] } })
 
     expect((await ui.find({ type: 'Text', text: /♡/ }))?.props.dimColor).toBe(true)
+    await ui.unmount()
+  })
+})
+
+describe('sitter', () => {
+  test('it steps in under the alerts, the most urgent care first, and leaves one poop to you', () => {
+    const p: Pet = { ...egg('Mochi', 0), hatchedAt: 0, hunger: 90, happiness: 90 }
+    expect(sitterAction(p)).toBeNull()
+    expect(sitterAction({ ...p, hunger: 20, happiness: 20, poops: 1 })).toBeNull()
+    expect(sitterAction({ ...p, hunger: 9 })).toBe('feed')
+    expect(sitterAction({ ...p, happiness: 9 })).toBe('snack')
+    expect(sitterAction({ ...p, hunger: 9, poops: 2 })).toBe('clean')
+    expect(sitterAction({ ...p, poops: 2, isSick: true })).toBe('meds')
+    expect(sitterAction({ ...p, hunger: 0, isAsleep: true })).toBeNull()
+    expect(sitterAction({ ...p, hunger: 0, hatchedAt: null })).toBeNull()
+  })
+
+  test('a hired sitter feeds a starving pet for its fee, with no xp, and does nothing once the coins run short', async ($, on) => {
+    const clock = await start($, on, { pet: oldPet({ hunger: 8, happiness: 5 }), wallet: walletToday({ coins: 9, sitter: 'on' }) })
+    await clock.advance(MINUTE)
+    let status = await pet($)
+    expect(status).toMatch(/🍖 \S+ 38%/)
+    expect(status).toContain('10 xp to go')
+    expect(await pet($, 'coins')).toContain('🪙 4 coins')
+
+    // Joy is low now too, but 4 coins do not cover the snack.
+    await clock.advance(MINUTE)
+    status = await pet($)
+    expect(status).toMatch(/😊 \S+ [34]%/)
+    expect(await pet($, 'coins')).toContain('🪙 4 coins')
+  })
+
+  test('coins hire the sitter once, and its mark sits beside the coins, dim when they run short', async ($, on) => {
+    const store = sharedStore(on, { pet: oldPet({ hunger: 90 }), wallet: walletToday({ coins: 400 }) })
+    await start($, on, null)
+    expect(await pet($, 'sitter on')).toContain('No sitter yet')
+    expect(await pet($, 'buy sitter')).toContain('costs 500 🪙 and you have 400')
+    expect(await pet($, 'shop')).toContain('100 🪙 to go')
+
+    store.set('wallet', walletToday({ coins: 503 }))
+    expect(await pet($, 'buy sitter')).toContain('Hired the sitter for 500 🪙, 3 left')
+    expect(await pet($, 'buy sitter')).toContain('already works for you')
+    expect(await pet($, 'shop')).toMatch(/🤖 sitter .* hired/)
+    expect(await pet($)).toContain('sitter on duty')
+
+    const ui = await $.ui.mount({ plugin: 'devling', surface: 'terminal', component: 'SessionMode', props: { modes: [] } })
+    expect((await ui.find({ type: 'Text', text: ' 🤖' }))?.props.dimColor).toBe(true)
+    await ui.unmount()
+  })
+
+  test('/pet sitter off gives it a break: no care and no mark until /pet sitter on', async ($, on) => {
+    const clock = await start($, on, { pet: oldPet({ hunger: 8, happiness: 90 }), wallet: walletToday({ coins: 100, sitter: 'on' }) })
+    expect(await pet($, 'sitter off')).toContain('Sitter off')
+    expect(await pet($, 'sitter')).toContain('on a break')
+    const ui = await $.ui.mount({ plugin: 'devling', surface: 'terminal', component: 'SessionMode', props: { modes: [] } })
+    expect(await ui.find({ type: 'Text', text: ' 🤖' })).toBeUndefined()
+    await clock.advance(MINUTE)
+    expect(await pet($)).toMatch(/🍖 \S+ 8%/)
+
+    expect(await pet($, 'sitter on')).toContain('Sitter on')
+    expect(await ui.find({ type: 'Text', text: ' 🤖' })).toBeDefined()
+    await clock.advance(MINUTE)
+    expect(await pet($)).toMatch(/🍖 \S+ 37%/)
+    expect(await pet($, 'coins')).toContain('🪙 95 coins')
     await ui.unmount()
   })
 })

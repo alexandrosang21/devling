@@ -32,6 +32,9 @@ export type Pet = {
   joyHearts: number
 }
 
+/** The sitter: not hired yet, at work, or on a break the person gave it with /pet sitter off. */
+export type Sitter = 'none' | 'on' | 'off'
+
 /** Coins earned by working with Claude, shared by every open session, and the skins they bought. */
 export type Wallet = {
   coins: number
@@ -45,6 +48,8 @@ export type Wallet = {
   today: number
   /** Days in a row with a session open. */
   streak: number
+  /** Hired for good once bought; while on, it looks after the pet for a fee a care when nobody else does. */
+  sitter: Sitter
 }
 
 /** Where the pet is drawn: the prompt footer's right side, or the band above the prompt. */
