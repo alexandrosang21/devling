@@ -19,8 +19,11 @@ export const EARN = {
 } as const
 
 export const REVIVE_PRICE = 200
-/** The sitter is hired once, then paid for each care it gives: coins earned at work end up as meals. */
-export const SITTER_PRICE = 500
+/**
+ * The sitter is hired once, then paid for each care it gives: coins earned at work end up as meals. The
+ * dearest thing in the shop, about five working days, since it does the most.
+ */
+export const SITTER_PRICE = 1000
 export const SITTER_FEE = 5
 
 /** What one more food or joy heart costs, by the heart it would be: the fourth, then the fifth. */

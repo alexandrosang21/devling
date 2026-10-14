@@ -43,7 +43,7 @@ A typical working day brings in about 200. `/pet shop` lists what they buy:
 - **Skins.** Seven species, each with its own baby, child, teen and adult drawings: devling (free), chick, cat, frog, ghost, blob and cube, from 150 to 500 coins. A skin changes the look only: the pet keeps its name, level and stage. Bought skins are yours for good; switch between them for free.
 - **Hearts.** A new pet holds three hearts of food and three of joy. A fourth costs 150 and a fifth 300. Each heart holds 25 points more, so the bar lasts longer between meals or games.
 - **Revive.** 200 coins bring a pet back from the pixel stars at the stage and level it left with.
-- **Sitter.** 500 coins hire a little robot for the days you are too busy. When food or joy drops under 10, at two poops, or when the pet is sick, it steps in for 5 coins a care. It never plays, earns the pet no experience and leaves a single poop to you. Its 🤖 sits beside your coins in the footer while it is on, dim when they no longer cover its fee. `/pet sitter off` gives it a break, `/pet sitter on` puts it back to work.
+- **Sitter.** 1000 coins hire a little robot for the days you are too busy. When food or joy drops under 10, at two poops, or when the pet is sick, it steps in for 5 coins a care. It never plays, earns the pet no experience and leaves a single poop to you. Its 🤖 sits beside your coins in the footer while it is on, dim when they no longer cover its fee. `/pet sitter off` gives it a break, `/pet sitter on` puts it back to work.
 
 <p align="center"><img src="docs/species.svg" alt="Every Devling species at every stage, from egg to angel: devling, chick, cat, frog, ghost, blob and cube" width="770"></p>
 
@@ -91,7 +91,7 @@ A mod runs with your permissions. To see what this one hooks and calls before yo
 | `/pet skin <skin>` | Puts on a skin you own |
 | `/pet upgrade food`, `/pet upgrade joy` | One more heart, up to five |
 | `/pet revive` | Brings it back from the pixel stars for 200 coins |
-| `/pet buy sitter` | Hires the sitter for 500 coins (see above) |
+| `/pet buy sitter` | Hires the sitter for 1000 coins (see above) |
 | `/pet sitter on`, `/pet sitter off` | Puts the sitter to work, or gives it a break |
 | `/pet name <name>` | Renames it |
 | `/pet footer` | Draws it at the bottom right, under the prompt (the default) |
