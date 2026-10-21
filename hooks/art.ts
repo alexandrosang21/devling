@@ -1,7 +1,7 @@
 import type { Act, ActKind, Pet, Sitter } from '../types'
 import { SITTER_PRICE, SITTER_WAGE, heartPrice } from './economy'
-import { HEART, MAX_HEARTS, MINUTE, foodMax, forgiveIn, joyMax, levelOf, needsAttention, stageOf, xpForLevel } from './life'
-import type { Roll } from './life'
+import { GRUMPY_AFTER, HEART, MAX_HEARTS, MINUTE, foodMax, forgiveIn, growthOf, joyMax, levelOf, needsAttention, stageOf, xpForLevel } from './life'
+import type { Roll, Stage } from './life'
 import { DEFAULT_SKIN, pixelsOf, shapeOf, skinOf, widthOf } from './skins'
 import type { Pixels } from './skins'
 
@@ -240,7 +240,28 @@ function ageOf(p: Pet, now: number): string {
   return days === 0 ? 'born today' : `${days} day${days === 1 ? '' : 's'} old`
 }
 
-/** What `/pet` prints: the pet itself, then its numbers, its skin, the coins and the sitter. */
+const grownName = (stage: Stage): string => (stage === 'grumpy' ? 'a grumpy adult' : withArticle(stage))
+
+/** What it grows into next and what that takes, for /pet: so the person knows what the xp and the care are for. */
+export function growthLine(p: Pet): string {
+  const growth = growthOf(p)
+  if (growth === null) {
+    return 'next: nothing, an elder is all grown up'
+  }
+  if ('toForgive' in growth) {
+    return `next: ${grownName(growth.stage)} once neglect is down to ${GRUMPY_AFTER}: ${growth.toForgive} to forgive, about ${Math.ceil(growth.careMinutes / 60)}h of good care`
+  }
+  const caveat =
+    growth.stage === 'elder'
+      ? `, if neglect stays at ${GRUMPY_AFTER} or less`
+      : growth.stage === 'grumpy'
+        ? `, unless its neglect is down to ${GRUMPY_AFTER} by then`
+        : ''
+
+  return `next: ${grownName(growth.stage)} at ${LEVEL}${growth.level}, ${growth.xpToGo} xp to go${caveat}`
+}
+
+/** What `/pet` prints: the pet itself, then its numbers, what it grows into next, its skin, the coins and the sitter. */
 export function statusBlock(p: Pet, now: number, coins: number, sitter: Sitter = 'none'): string {
   const stage = stageOf(p)
   const sprite = shapeOf(p.skin, stage)
@@ -262,6 +283,7 @@ export function statusBlock(p: Pet, now: number, coins: number, sitter: Sitter =
     const toGo = xpForLevel(level + 1) - p.xp
     const forgiving = p.careMistakes > 0 ? `, one forgiven in ${Math.ceil(forgiveIn(p) / 60)}h` : ''
     block.push(`${LEVEL}${level} ${xpBar(p.xp, 10)} ${LEVEL}${level + 1} · ${toGo} xp to go · neglect ${p.careMistakes}${forgiving}`)
+    block.push(growthLine(p))
   }
   if (p.poops > 0 && stage !== 'angel') {
     block.push('💩 No xp until the poop is gone: /pet clean')

@@ -168,6 +168,7 @@ const EVENT_TOASTS: Partial<Record<LifeEvent, string>> = {
   hungry: '{name} is hungry. /pet feed',
   sad: '{name} feels lonely. /pet play',
   left: '{name} flew off to the pixel stars. /pet revive or /pet new',
+  forgiven: '{name} let a care mistake go: neglect {neglect} now.',
 }
 
 // What it says while Claude works and the xp it would have earned is lost to the mess.
@@ -181,7 +182,7 @@ const POOPY_LINES = [
 // What each command does, with its numbers: they mirror perform() and live() in life.ts and economy.ts.
 const HELP = [
   'Care',
-  '  /pet                 how it is doing',
+  '  /pet                 how it is doing, and what it grows into next',
   '  /pet feed            +30 food; it poops 10 to 50 minutes later, sooner the younger it is',
   '  /pet snack           +15 joy, +5 food',
   '  /pet play            +20 joy, -5 food, -10 energy (not when hungry or tired)',
@@ -334,7 +335,7 @@ async function tell($: EngineInterface, events: readonly LifeEvent[], after: Pet
         : EVENT_TOASTS[event]
     const isSeenTo = isCovered && (event === 'hungry' || event === 'sad' || event === 'sick' || event === 'pooped')
     if (toast !== undefined && !isSeenTo) {
-      $.ui.toast(toast.replace('{name}', after.name))
+      $.ui.toast(toast.replace('{name}', after.name).replace('{neglect}', String(after.careMistakes)))
     }
   }
 }

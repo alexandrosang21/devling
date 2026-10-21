@@ -2,7 +2,7 @@ import { describe, expect, mock, test } from 'claude-code/testing'
 import type { Engine, MockClock } from 'claude-code/testing'
 import type { On } from 'claude-code'
 
-import { DONE_LINES, NEW_TASK_LINES, breakLine, bubbleLines, cleanQuip, sceneOf, xpBar } from '../hooks/art'
+import { DONE_LINES, NEW_TASK_LINES, breakLine, bubbleLines, cleanQuip, growthLine, sceneOf, xpBar } from '../hooks/art'
 import { dayOf } from '../hooks/economy'
 import { active, egg, eventsBetween, live, perform, revive, sitterAction, stageOf } from '../hooks/life'
 import type { Pet, Wallet } from '../types'
@@ -786,7 +786,18 @@ describe('growing old', () => {
     expect(perform(asleep, 'feed', 0, () => 0.5).line).toContain('zZz')
   })
 
-  test('a well kept adult becomes an elder at level 20, in a golden coat', () => {
+  test('/pet tells what it grows into next, and what that takes', () => {
+    const at = (xp: number, careMistakes = 0, goodMinutes = 0): string =>
+      growthLine({ ...egg('Mochi', 0), hatchedAt: 0, xp, careMistakes, goodMinutes })
+
+    expect(at(0)).toBe('next: a child at ⭐3, 40 xp to go')
+    expect(at(500)).toBe('next: an elder at ⭐20, 3110 xp to go, if neglect stays at 5 or less')
+    expect(at(500, 6)).toBe('next: an adult once neglect is down to 5: 1 to forgive, about 8h of good care')
+    expect(at(6250, 7, 60)).toBe('next: an elder once neglect is down to 5: 2 to forgive, about 15h of good care')
+    expect(at(3610)).toBe('next: nothing, an elder is all grown up')
+  })
+
+  test('a well kept adult becomes an elder at level 20, in a shiny coat', () => {
     const elder: Pet = { ...egg('Mochi', 0), hatchedAt: 0, xp: 3610 }
     expect(stageOf(elder)).toBe('elder')
     expect(stageOf({ ...elder, xp: 3609 })).toBe('adult')
@@ -797,7 +808,9 @@ describe('growing old', () => {
   test('/pet says when the next mistake is forgiven, and growing up grumpy pays no stage bonus', async ($, on) => {
     on('turn.complete', ($, e) => ({ text: e.answer }))
     await start($, on, { pet: oldPet({ hunger: 90, xp: 488, careMistakes: 6, goodMinutes: 120 }), wallet: walletToday({ coins: 0 }) })
-    expect(await pet($)).toContain('neglect 6, one forgiven in 6h')
+    const status = await pet($)
+    expect(status).toContain('neglect 6, one forgiven in 6h')
+    expect(status).toContain('next: a grumpy adult at ⭐8, 2 xp to go, unless its neglect is down to 5 by then')
 
     await finish($, 5_000)
 

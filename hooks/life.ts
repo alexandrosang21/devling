@@ -9,9 +9,12 @@ const HATCH_MS = 2 * MINUTE
 const MISTAKE_AFTER_MIN = 15
 // More care mistakes than this make a grumpy adult. A working day of lived minutes with no spell of neglect
 // long enough to be a mistake forgives one: a sickness treated within the quarter hour does not count.
-const GRUMPY_AFTER = 5
+export const GRUMPY_AFTER = 5
 const FORGIVE_AFTER_MIN = 8 * 60
-// A grown pet of this level, cared for well enough not to be grumpy, becomes an elder.
+// The levels it grows at: a child, a teen, grown up (an adult, or grumpy), and an elder when well kept.
+const CHILD_LEVEL = 3
+const TEEN_LEVEL = 5
+const GROWN_LEVEL = 8
 const ELDER_LEVEL = 20
 // Twelve hours of neglect while sessions are open, never time away.
 const LEAVE_AFTER_MIN = 12 * 60
@@ -62,9 +65,9 @@ export function stageOf(p: Pet): Stage {
   if (p.leftAt !== null) return 'angel'
   if (p.hatchedAt === null) return 'egg'
   const level = levelOf(p.xp)
-  if (level < 3) return 'baby'
-  if (level < 5) return 'child'
-  if (level < 8) return 'teen'
+  if (level < CHILD_LEVEL) return 'baby'
+  if (level < TEEN_LEVEL) return 'child'
+  if (level < GROWN_LEVEL) return 'teen'
   if (p.careMistakes > GRUMPY_AFTER) return 'grumpy'
 
   return level < ELDER_LEVEL ? 'adult' : 'elder'
@@ -252,6 +255,38 @@ export function isNudgeDue(p: Pet, now: number): boolean {
 
 /** Lived minutes of good care still to go before the next care mistake is forgiven. */
 export const forgiveIn = (p: Pet): number => FORGIVE_AFTER_MIN - p.goodMinutes
+
+/**
+ * What it grows into next and what that takes: the level and the xp to it, or for a grumpy pet the care
+ * mistakes still to forgive and the lived minutes of good care they take. Null when nothing is next.
+ */
+export type Growth = { stage: Stage; level: number; xpToGo: number } | { stage: Stage; toForgive: number; careMinutes: number }
+
+export function growthOf(p: Pet): Growth | null {
+  const stage = stageOf(p)
+  const toLevel = (level: number, next: Stage): Growth => ({ stage: next, level, xpToGo: xpForLevel(level) - p.xp })
+  switch (stage) {
+    case 'baby':
+      return toLevel(CHILD_LEVEL, 'child')
+    case 'child':
+      return toLevel(TEEN_LEVEL, 'teen')
+    case 'teen':
+      return toLevel(GROWN_LEVEL, p.careMistakes > GRUMPY_AFTER ? 'grumpy' : 'adult')
+    case 'adult':
+      return toLevel(ELDER_LEVEL, 'elder')
+    case 'grumpy': {
+      const toForgive = p.careMistakes - GRUMPY_AFTER
+
+      return {
+        stage: levelOf(p.xp) < ELDER_LEVEL ? 'adult' : 'elder',
+        toForgive,
+        careMinutes: forgiveIn(p) + (toForgive - 1) * FORGIVE_AFTER_MIN,
+      }
+    }
+    default:
+      return null
+  }
+}
 
 /** One minute of life while a session is open. */
 export function live(p: Pet, now: number, roll: Roll): { pet: Pet; events: LifeEvent[] } {

@@ -16,7 +16,7 @@ Food and joy in hearts, energy, level, and coins. The pet talks in a speech bubb
 
 - **Egg.** A new pet starts as an egg and hatches a couple of minutes later.
 - **Needs.** Food, joy and energy drop a little every minute while a Claude Code session is open. Time away counts too, but only up to a cap: come back after a weekend and it is hungry, rested and happy to see you. An hour with no prompt typed and no `/pet` counts as time away as well, so a session left open overnight does it no harm.
-- **Growing up.** Every tool call Claude runs and every finished task earns experience. It goes from baby to child, teen and adult, and at level 20 a well kept adult becomes an elder in a shiny coat of its own. A pet that was neglected too often grows into a grumpy adult, but every working day of good care (eight lived hours with no new care mistake; a sickness treated within a quarter hour does not count) forgives one mistake, and with five or fewer left it is itself again. `/pet` shows how long until the next one.
+- **Growing up.** Every tool call Claude runs and every finished task earns experience. It goes from baby to child, teen and adult, and at level 20 a well kept adult becomes an elder in a shiny coat of its own. A pet that was neglected too often grows into a grumpy adult, but every working day of good care (eight lived hours with no new care mistake; a sickness treated within a quarter hour does not count) forgives one mistake, and with five or fewer left it is itself again. `/pet` shows what it grows into next and what that takes: the xp to the level, or for a grumpy pet the mistakes still to forgive and about how many hours of care that is. A toast tells you each time one is forgiven.
 - **Mess.** It poops after meals and now and then, the younger the more often. While there is poop around it earns no experience at all, and it will ask you to clean up. Leave the mess too long and it can get sick.
 - **Leaving.** Neglected for twelve hours in a row while you are around, it flies off to the pixel stars. `/pet revive` brings it back, or `/pet new` gives you a new egg. A hired sitter keeps that from happening while your coins last.
 - **Breaks.** Ten minutes or more with no prompt is a break, and it cheers the pet up. After an hour and a half at the keyboard with no break it suggests one, then again every hour, and a break it asked for pays 10 coins.
@@ -80,7 +80,7 @@ A mod runs with your permissions. To see what this one hooks and calls before yo
 
 | Command | What it does |
 | :- | :- |
-| `/pet` | Shows the pet, its stats, its skin and your coins |
+| `/pet` | Shows the pet, its stats, what it grows into next, its skin and your coins |
 | `/pet feed` | A meal |
 | `/pet snack` | A treat that cheers it up |
 | `/pet play` | Play together |
