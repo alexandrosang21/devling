@@ -16,6 +16,8 @@ export const EARN = {
   streakDays: 7,
   level: 20,
   stage: 50,
+  /** A break taken when the pet asked for one. */
+  rest: 10,
 } as const
 
 export const REVIVE_PRICE = 200

@@ -7,6 +7,11 @@ export const MINUTE = 60_000
 export const MAX_POOPS = 4
 const HATCH_MS = 2 * MINUTE
 const MISTAKE_AFTER_MIN = 15
+// More care mistakes than this make a grumpy adult; a working day of good care, in lived minutes, forgives one.
+const GRUMPY_AFTER = 5
+const FORGIVE_AFTER_MIN = 8 * 60
+// A grown pet of this level, cared for well enough not to be grumpy, becomes an elder.
+const ELDER_LEVEL = 20
 // Twelve hours of neglect while sessions are open, never time away.
 const LEAVE_AFTER_MIN = 12 * 60
 // While no session is open it decays at the waking rate, never by more than this, never below the floor.
@@ -18,8 +23,15 @@ export const IDLE_MS = 60 * MINUTE
 
 export const isIdle = (p: Pet, now: number): boolean => now - p.lastActiveAt >= IDLE_MS
 
-export type Stage = 'egg' | 'baby' | 'child' | 'teen' | 'adult' | 'grumpy' | 'angel'
-export type LifeEvent = 'hatched' | 'pooped' | 'sick' | 'fell-asleep' | 'woke' | 'hungry' | 'sad' | 'left'
+// Ten minutes or more with no prompt and no /pet is a break, which cheers it up. After an hour and a half
+// at the keyboard with none it asks for one, then every hour; one taken after it asked pays (economy.ts).
+export const BREAK_MS = 10 * MINUTE
+const BREAK_JOY = 10
+const NUDGE_AFTER_MS = 90 * MINUTE
+const NUDGE_EVERY_MS = 60 * MINUTE
+
+export type Stage = 'egg' | 'baby' | 'child' | 'teen' | 'adult' | 'elder' | 'grumpy' | 'angel'
+export type LifeEvent = 'hatched' | 'pooped' | 'sick' | 'fell-asleep' | 'woke' | 'hungry' | 'sad' | 'left' | 'forgiven' | 'break-time'
 export type Action = 'feed' | 'snack' | 'play' | 'clean' | 'meds' | 'sleep' | 'wake'
 export type Roll = () => number
 
@@ -52,14 +64,15 @@ export function stageOf(p: Pet): Stage {
   if (level < 3) return 'baby'
   if (level < 5) return 'child'
   if (level < 8) return 'teen'
+  if (p.careMistakes > GRUMPY_AFTER) return 'grumpy'
 
-  return p.careMistakes <= 5 ? 'adult' : 'grumpy'
+  return level < ELDER_LEVEL ? 'adult' : 'elder'
 }
 
 // The smaller it is, the more often it goes: a baby about three times as often as an adult, and it
 // digests a meal in half the time.
-const POOP_CHANCE: Record<Stage, number> = { egg: 0, baby: 1 / 45, child: 1 / 70, teen: 1 / 100, adult: 1 / 140, grumpy: 1 / 140, angel: 0 }
-const DIGEST_MIN: Record<Stage, number> = { egg: 20, baby: 10, child: 15, teen: 20, adult: 25, grumpy: 25, angel: 20 }
+const POOP_CHANCE: Record<Stage, number> = { egg: 0, baby: 1 / 45, child: 1 / 70, teen: 1 / 100, adult: 1 / 140, elder: 1 / 140, grumpy: 1 / 140, angel: 0 }
+const DIGEST_MIN: Record<Stage, number> = { egg: 20, baby: 10, child: 15, teen: 20, adult: 25, elder: 25, grumpy: 25, angel: 20 }
 
 export function needsAttention(p: Pet): boolean {
   return p.hunger < 25 || p.happiness < 25 || p.isSick || p.poops > 0
@@ -106,6 +119,8 @@ export function egg(name: string, now: number, skin = DEFAULT_SKIN, foodHearts =
     skin,
     foodHearts,
     joyHearts,
+    goodMinutes: 0,
+    workSince: now,
   }
 }
 
@@ -144,6 +159,9 @@ export function revive(value: unknown, now: number): Pet | null {
     // A pet from before hearts were bought has always held four.
     foodHearts: heartsOf(saved.foodHearts, 4),
     joyHearts: heartsOf(saved.joyHearts, 4),
+    // A pet from before forgiveness and breaks starts counting both now.
+    goodMinutes: num(saved.goodMinutes, 0),
+    workSince: num(saved.workSince, num(saved.lastActiveAt, num(saved.lastSeenAt, now))),
   })
 }
 
@@ -167,6 +185,8 @@ export function eventsBetween(before: Pet, after: Pet): LifeEvent[] {
   if (before.isAsleep && !after.isAsleep) events.push('woke')
   if (before.hunger >= 25 && after.hunger < 25) events.push('hungry')
   if (before.happiness >= 25 && after.happiness < 25) events.push('sad')
+  if (after.careMistakes < before.careMistakes) events.push('forgiven')
+  if (isNudgeDue(after, after.lastSeenAt)) events.push('break-time')
 
   return events
 }
@@ -191,18 +211,37 @@ export function comeBack(p: Pet, now: number): Pet {
     hatchedAt: p.hatchedAt ?? (now - p.bornAt >= HATCH_MS ? now : null),
     lastSeenAt: now,
     lastActiveAt: now,
+    workSince: minutes * MINUTE >= BREAK_MS ? now : p.workSince,
   }
 }
 
 /**
  * Someone is about: a typed prompt or a /pet. An idle spell before it comes back as time away, counted
- * from the hour it went idle, the way comeBack() counts a closed session.
+ * from the hour it went idle, the way comeBack() counts a closed session. Back from a break, it is glad
+ * to see them, and a new spell at the keyboard begins.
  */
 export function active(p: Pet, now: number): Pet {
   const pet = isIdle(p, now) ? comeBack({ ...p, lastSeenAt: p.lastActiveAt + IDLE_MS }, now) : p
+  if (now - p.lastActiveAt < BREAK_MS) {
+    return { ...pet, lastActiveAt: now }
+  }
 
-  return { ...pet, lastActiveAt: now }
+  return { ...pet, lastActiveAt: now, workSince: now, happiness: fill(pet.happiness + BREAK_JOY) }
 }
+
+/** Back from a break the pet asked for: the spell before it ran past the first nudge. */
+export const isHeededBreak = (p: Pet, now: number): boolean =>
+  now - p.lastActiveAt >= BREAK_MS && p.lastActiveAt - p.workSince >= NUDGE_AFTER_MS
+
+/** An hour and a half at the keyboard with no break, or another hour on, this minute: time to ask for one. */
+export function isNudgeDue(p: Pet, now: number): boolean {
+  const spell = now - p.workSince
+
+  return !p.isAsleep && now - p.lastActiveAt < BREAK_MS && spell >= NUDGE_AFTER_MS && (spell - NUDGE_AFTER_MS) % NUDGE_EVERY_MS < MINUTE
+}
+
+/** Lived minutes of good care still to go before the next care mistake is forgiven. */
+export const forgiveIn = (p: Pet): number => FORGIVE_AFTER_MIN - p.goodMinutes
 
 /** One minute of life while a session is open. */
 export function live(p: Pet, now: number, roll: Roll): { pet: Pet; events: LifeEvent[] } {
@@ -263,6 +302,15 @@ export function live(p: Pet, now: number, roll: Roll): { pet: Pet; events: LifeE
   if (next.neglect === MISTAKE_AFTER_MIN) {
     next.careMistakes += 1
   }
+  next.goodMinutes = isNeglected ? 0 : p.goodMinutes + 1
+  if (next.goodMinutes >= FORGIVE_AFTER_MIN) {
+    next.goodMinutes = 0
+    if (next.careMistakes > 0) {
+      next.careMistakes -= 1
+      events.push('forgiven')
+    }
+  }
+  if (isNudgeDue(next, now)) events.push('break-time')
   if (next.neglect >= LEAVE_AFTER_MIN) {
     next.leftAt = now
     events.push('left')

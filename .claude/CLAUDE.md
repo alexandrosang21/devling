@@ -6,8 +6,8 @@ A Claude Code **mod**: a plugin of function hooks (TypeScript, hot-reloaded) tha
 
 | File | What it holds |
 | :- | :- |
-| `hooks/register.tsx` | The hooks module: events, the `/pet` command, drawing (`ui.render` on `SessionMode` for the footer, `AbovePrompt` for the band), `$.state` atoms, `$.store` reads and writes, the sync between sessions, the wallet |
-| `hooks/life.ts` | The pet's life as pure functions: stages, `live()` (one minute), `perform()` (care actions), hearts, poop, `comeBack()` after time away, `bringBack()` (revive), `revive()` (reading a save) |
+| `hooks/register.tsx` | The hooks module: events, the `/pet` command, drawing (`ui.render` on `SessionMode` for the footer, `AbovePrompt` for the band), `$.state` atoms, `$.store` reads and writes, the sync between sessions, the wallet, the sitter's minute, the rate-limit warnings |
+| `hooks/life.ts` | The pet's life as pure functions: stages, `live()` (one minute), `perform()` (care actions), hearts, poop, the sitter's care (`sit()`), forgiveness, breaks, `comeBack()` after time away, `bringBack()` (revive), `revive()` (reading a save) |
 | `hooks/art.ts` | Drawing and text as plain data: `sceneOf()` (the sprite as half-block rows), `statsLine()`, `statusBlock()` (`/pet`), `shopBlock()`, the speech lines, the joke prompt |
 | `hooks/skins.ts` | The species: palettes and drawings, the derived egg, grumpy and angel, `pixelsOf()` (blink, wave, mirror, tint), `shapeOf()` |
 | `hooks/economy.ts` | Coins: what pays what, prices, wallet operations |
@@ -35,7 +35,7 @@ Run all three checks before a commit.
 - **Several sessions share one pet.** Every pet change goes through `change()`, which syncs first and then saves. Every wallet change goes through `withWallet()`. Only the session that claims `tickedAt` runs `live()` each minute, so two sessions never age the pet twice. Growth rewards are paid in `change()` only, never in `sync()`, or each session would pay them again.
 - **The footer must not jump.** Sprites are 6 pixel rows (3 text rows), drawn as half blocks with a text and a background color. Use only emoji that are wide by default (no variation selector), and count them in `columnsOf()`.
 - **Numbers are written twice.** The help text in `register.tsx` quotes the values in `life.ts` and `economy.ts`. Change both together.
-- **A new species** is four drawings (baby, child, teen, adult) and a palette in `skins.ts`. The egg, grumpy and angel are derived from them. Redraw the README's pictures after, or CI fails.
+- **A new species** is four drawings (baby, child, teen, adult) and a palette in `skins.ts`. The egg, elder, grumpy and angel are derived from them. Redraw the README's pictures after, or CI fails.
 
 ## Style
 

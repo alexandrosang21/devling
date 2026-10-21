@@ -1,6 +1,6 @@
 import type { Act, Pet, Sitter } from '../types'
 import { SITTER_FEE, SITTER_PRICE, heartPrice } from './economy'
-import { HEART, MAX_HEARTS, foodMax, joyMax, levelOf, needsAttention, stageOf, xpForLevel } from './life'
+import { HEART, MAX_HEARTS, MINUTE, foodMax, forgiveIn, joyMax, levelOf, needsAttention, stageOf, xpForLevel } from './life'
 import type { Roll } from './life'
 import { DEFAULT_SKIN, pixelsOf, shapeOf, skinOf, widthOf } from './skins'
 import type { Pixels } from './skins'
@@ -256,7 +256,8 @@ export function statusBlock(p: Pet, now: number, coins: number, sitter: Sitter =
   const block = sprite.map((line, i) => line.padEnd(pad) + (lines[i] ?? ''))
   if (stage !== 'angel' && stage !== 'egg') {
     const toGo = xpForLevel(level + 1) - p.xp
-    block.push(`${LEVEL}${level} ${xpBar(p.xp, 10)} ${LEVEL}${level + 1} · ${toGo} xp to go · neglect ${p.careMistakes}`)
+    const forgiving = p.careMistakes > 0 ? `, one forgiven in ${Math.ceil(forgiveIn(p) / 60)}h` : ''
+    block.push(`${LEVEL}${level} ${xpBar(p.xp, 10)} ${LEVEL}${level + 1} · ${toGo} xp to go · neglect ${p.careMistakes}${forgiving}`)
   }
   if (p.poops > 0 && stage !== 'angel') {
     block.push('💩 No xp until the poop is gone: /pet clean')
@@ -318,7 +319,8 @@ export function shopBlock(coins: number, owned: readonly string[], p: Pet | null
     ...heartRows,
     ...sitterRows,
     'Coins come from work: +1 a typed prompt (50 a day), +3 a finished task (+5 more past a minute,',
-    '+10 more past five), +10 a day\'s first session, +50 every 7 days in a row, +20 a level, +50 a new stage.',
+    '+10 more past five), +10 a day\'s first session, +50 every 7 days in a row, +20 a level, +50 a new stage,',
+    '+10 a break taken when it asks for one.',
   ].join('\n')
 }
 
@@ -370,6 +372,28 @@ export const DONE_LINES = [
   'commit before it breaks!',
   'that was a journey',
 ]
+export const COMPACT_LINES = ['my memory is a bit fuzzy now...', 'wait, what were we doing?', 'tl;dr: we did great']
+
+const BREAK_LINES = ['{time} at it. stretch, water, 10 min?', '{time} straight! a short walk?', '{time} in. rest your eyes a bit?']
+
+/** What it says after a long spell at the keyboard: how long, to the minute, and a break to take. */
+export function breakLine(spellMs: number, roll: Roll): string {
+  const minutes = Math.max(0, Math.round(spellMs / MINUTE))
+  const rest = minutes % 60
+  const time = `${Math.floor(minutes / 60)}h${rest === 0 ? '' : ` ${rest}m`}`
+
+  return pick(BREAK_LINES, roll).replace('{time}', time)
+}
+
+const LIMITS: Readonly<Record<string, string>> = { five_hour: 'the 5-hour limit', seven_day: "the week's limit" }
+
+/** What it says when one of the plan's rate-limit windows fills up to `mark` percent. */
+export function limitLine(kind: string, mark: number): string {
+  return `${mark}% of ${LIMITS[kind] ?? 'the spend limit'} used. ${mark >= 95 ? 'almost out!' : 'pace it?'}`
+}
+
+/** A word with its article: a child, an adult, an elder. */
+export const withArticle = (word: string): string => `${/^[aeiou]/.test(word) ? 'an' : 'a'} ${word}`
 
 const QUIP_INPUT_MAX = 600
 

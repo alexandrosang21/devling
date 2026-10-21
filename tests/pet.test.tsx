@@ -2,9 +2,9 @@ import { describe, expect, mock, test } from 'claude-code/testing'
 import type { Engine, MockClock } from 'claude-code/testing'
 import type { On } from 'claude-code'
 
-import { DONE_LINES, NEW_TASK_LINES, bubbleLines, cleanQuip, sceneOf, xpBar } from '../hooks/art'
+import { DONE_LINES, NEW_TASK_LINES, breakLine, bubbleLines, cleanQuip, sceneOf, xpBar } from '../hooks/art'
 import { dayOf } from '../hooks/economy'
-import { active, egg, live, revive, sitterAction } from '../hooks/life'
+import { active, egg, live, revive, sitterAction, stageOf } from '../hooks/life'
 import type { Pet, Wallet } from '../types'
 
 const MINUTE = 60_000
@@ -705,6 +705,128 @@ describe('sitter', () => {
     await clock.advance(MINUTE)
     expect(await pet($)).toMatch(/🍖 \S+ 37%/)
     expect(await pet($, 'coins')).toContain('🪙 95 coins')
+    await ui.unmount()
+  })
+
+  test('on duty, it keeps the toasts it sees to quiet, and says once when its coins run out', async ($, on) => {
+    const toasts: string[] = []
+    on('ui.toast', ($, e) => {
+      toasts.push(e.text)
+
+      return { value: undefined }
+    })
+    const store = sharedStore(on, { pet: oldPet({ hunger: 25.3, happiness: 90 }), wallet: walletToday({ coins: 100, sitter: 'on' }) })
+    const clock = await start($, on, null)
+    await clock.advance(MINUTE)
+    expect(toasts.filter(text => text.includes('is hungry'))).toEqual([])
+
+    store.set('wallet', walletToday({ coins: 0, sitter: 'on' }))
+    store.set('pet', { ...(store.get('pet') as Pet), hunger: 8, lastSeenAt: NOW + MINUTE + 1_000 })
+    await clock.advance(2 * MINUTE)
+
+    expect(toasts.filter(text => text === 'The sitter is out of coins: Biscuit needs you.')).toHaveLength(1)
+  })
+})
+
+describe('growing old', () => {
+  test('a working day of good care forgives a mistake, and a grumpy adult comes round', () => {
+    let p: Pet = { ...egg('Mochi', 0), hatchedAt: 0, xp: 500, careMistakes: 6, foodHearts: 5, joyHearts: 5 }
+    expect(stageOf(p)).toBe('grumpy')
+    const events: string[] = []
+    for (let minute = 1; minute <= 8 * 60; minute++) {
+      const at = minute * MINUTE
+      // Fed, cheered, rested and clean all day, with someone about the whole time.
+      const lived = live({ ...p, hunger: 100, happiness: 100, energy: 100, lastActiveAt: at, workSince: at }, at, () => 0.99)
+      events.push(...lived.events)
+      p = lived.pet
+    }
+
+    expect(p.careMistakes).toBe(5)
+    expect(events).toContain('forgiven')
+    expect(stageOf(p)).toBe('adult')
+  })
+
+  test('a neglected minute starts the day of good care over', () => {
+    const p: Pet = { ...egg('Mochi', 0), hatchedAt: 0, careMistakes: 2, goodMinutes: 400 }
+    expect(live({ ...p, hunger: 0 }, MINUTE, () => 0.99).pet.goodMinutes).toBe(0)
+    expect(live({ ...p, hunger: 90 }, MINUTE, () => 0.99).pet.goodMinutes).toBe(401)
+  })
+
+  test('a well kept adult becomes an elder at level 20, in a golden coat', () => {
+    const elder: Pet = { ...egg('Mochi', 0), hatchedAt: 0, xp: 3610 }
+    expect(stageOf(elder)).toBe('elder')
+    expect(stageOf({ ...elder, xp: 3609 })).toBe('adult')
+    expect(stageOf({ ...elder, careMistakes: 6 })).toBe('grumpy')
+    expect(sceneOf(elder, 1, null).sprite).not.toEqual(sceneOf({ ...elder, xp: 3609 }, 1, null).sprite)
+  })
+
+  test('/pet says when the next mistake is forgiven, and growing up grumpy pays no stage bonus', async ($, on) => {
+    on('turn.complete', ($, e) => ({ text: e.answer }))
+    await start($, on, { pet: oldPet({ hunger: 90, xp: 488, careMistakes: 6, goodMinutes: 120 }), wallet: walletToday({ coins: 0 }) })
+    expect(await pet($)).toContain('neglect 6, one forgiven in 6h')
+
+    await finish($, 5_000)
+
+    expect(await pet($)).toContain('Biscuit · grumpy')
+    // A level and a task, no stage.
+    expect(await pet($, 'coins')).toContain('🪙 23 coins')
+  })
+})
+
+describe('breaks', () => {
+  test('an hour and a half at the keyboard with no break, it asks for one, then every hour', () => {
+    const p: Pet = { ...egg('Mochi', 0), hatchedAt: 0 }
+    const asks = (minutes: number, awayFor = 0): boolean =>
+      live({ ...p, energy: 100, lastActiveAt: (minutes - awayFor) * MINUTE }, minutes * MINUTE, () => 0.99).events.includes('break-time')
+
+    expect([89, 90, 91, 149, 150].map(minutes => asks(minutes))).toEqual([false, true, false, false, true])
+    // Already away from the keyboard: no need to ask.
+    expect(asks(150, 11)).toBe(false)
+    expect(breakLine(150 * MINUTE, () => 0)).toBe('2h 30m at it. stretch, water, 10 min?')
+  })
+
+  test('a break cheers it up, and one it asked for pays', async ($, on) => {
+    on('prompt.submit', ($, e) => ({ text: e.text }))
+    const clock = await start($, on, { pet: oldPet({ hunger: 90, happiness: 50, workSince: NOW - 100 * MINUTE }), jokes: false, wallet: walletToday({ coins: 100 }) })
+    await clock.advance(12 * MINUTE)
+    await $.prompt.submit({ text: 'back to the cart bug', wait: false, origin: { kind: 'composer' } })
+    await clock.advance(0)
+
+    // A coin for the prompt and ten for the break.
+    expect(await pet($, 'coins')).toContain('🪙 111 coins')
+    expect(active({ ...egg('Mochi', 0), happiness: 50 }, 11 * MINUTE).happiness).toBe(60)
+  })
+})
+
+describe('work', () => {
+  test('a tool Claude runs teaches it, once Claude has the result', async ($, on) => {
+    on('tool.call', () => ({ result: 'ok' }))
+    const clock = await start($, on, { pet: oldPet({ hunger: 90 }) })
+    const ran = await $.tool.call({ tool: 'Read', file_path: '/tmp/cart.php' })
+    expect(ran.deny).toBeUndefined()
+    await clock.advance(0)
+
+    expect(await pet($)).toContain('9 xp to go')
+  })
+
+  test('it warns once at 80% and once at 95% of a rate-limit window', async ($, on) => {
+    on('session.measure', ($, e) => ({ changed: e.changed }))
+    const clock = await start($, on, { pet: oldPet({ hunger: 90, happiness: 90 }) })
+    const ui = await $.ui.mount({ plugin: 'devling', surface: 'terminal', component: 'SessionMode', props: { modes: [] } })
+    const warns = async (percentUsed: number): Promise<boolean> => {
+      await $.session.measure({ context: { window: 200_000 }, rateLimits: [{ kind: 'five_hour', percentUsed }], changed: ['rateLimits'] })
+      await clock.advance(0)
+      const isSaid = (await ui.find({ type: 'Text', text: /of the 5-hour limit used/ })) !== undefined
+      // The bubble's few frames pass before the next reading.
+      await clock.advance(10_000)
+
+      return isSaid
+    }
+
+    expect(await warns(70)).toBe(false)
+    expect(await warns(81)).toBe(true)
+    expect(await warns(85)).toBe(false)
+    expect(await warns(96)).toBe(true)
     await ui.unmount()
   })
 })

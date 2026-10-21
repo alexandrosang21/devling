@@ -30,6 +30,10 @@ export type Pet = {
   foodHearts: number
   /** Hearts its joy bar holds, 3 to 5, bought up with coins; each heart holds 25 points. */
   joyHearts: number
+  /** Minutes lived in a row with no neglect; a working day of them forgives one care mistake. */
+  goodMinutes: number
+  /** When the person's spell at the keyboard began: the end of their last break of ten minutes or more. */
+  workSince: number
 }
 
 /** The sitter: not hired yet, at work, or on a break the person gave it with /pet sitter off. */

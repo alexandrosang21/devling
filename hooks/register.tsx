@@ -1,17 +1,20 @@
 import { atom, read, update } from 'claude-code'
-import type { ElementTable, EngineInterface, Register, Timer } from 'claude-code'
+import type { ElementTable, EngineInterface, Register, SessionRateLimit, Timer } from 'claude-code'
 
 import type { Act, ActKind, Pet, Place, Sitter, Speech, Wallet } from '../types'
 import {
+  COMPACT_LINES,
   DONE_LINES,
   IDLE_LINES,
   LANE,
   NEW_TASK_LINES,
   POOP,
   POOP_COLOR,
+  breakLine,
   bubbleLines,
   cleanQuip,
   columnsOf,
+  limitLine,
   pick,
   quipRequest,
   sceneOf,
@@ -19,6 +22,7 @@ import {
   statsLine,
   statusBlock,
   toolLine,
+  withArticle,
 } from './art'
 import type { Row, Segment } from './art'
 import { EARN, REVIVE_PRICE, SITTER_FEE, SITTER_PRICE, heartPrice, openDay, pay, payPrompt, spend, taskPay, walletOf } from './economy'
@@ -35,6 +39,7 @@ import {
   fill,
   fit,
   gainXp,
+  isHeededBreak,
   levelOf,
   live,
   newer,
@@ -99,6 +104,33 @@ let isQuipping = false
 let project = ''
 // The `about` option: what the person works on, in their words, so the jokes fit it. Set once per load.
 let about = ''
+// Set once the sitter met a care it could not pay for, so it says so once until it is paid again.
+let isSitterBroke = false
+// The rate-limit mark each window was last warned at, so 80% and 95% are each said once until it resets.
+const RATE_MARKS = [95, 80] as const
+const warnedAt = new Map<string, number>()
+
+// withWallet() and change() each read the saved copy, change it and save it back. Side by side in this
+// process (a task paid while the sitter charges, a tool call while the minute ticks), the later save would
+// write over the earlier, so each waits for the ones queued before it.
+type Line = { last: Promise<unknown> }
+const walletLine: Line = { last: Promise.resolve() }
+const petLine: Line = { last: Promise.resolve() }
+
+function inLine<T>(line: Line, job: () => Promise<T>): Promise<T> {
+  const run = line.last.then(job)
+  line.last = run.catch(() => undefined)
+
+  return run
+}
+
+/**
+ * Runs the pet's side of an event once the engine has its answer, so a tool result or a prompt never waits
+ * on the store. A save that fails is made again by the next change.
+ */
+function later(job: () => Promise<unknown>): void {
+  void job().catch(() => undefined)
+}
 
 const EVENT_LINES: Record<LifeEvent, string> = {
   hatched: '',
@@ -109,6 +141,9 @@ const EVENT_LINES: Record<LifeEvent, string> = {
   hungry: "I'm hungry... /pet feed",
   sad: 'play with me? /pet play',
   left: 'bye bye...',
+  forgiven: 'thanks for looking after me ♥',
+  // Said with how long it has been, by breakLine().
+  'break-time': '',
 }
 
 const EVENT_TOASTS: Partial<Record<LifeEvent, string>> = {
@@ -222,17 +257,30 @@ async function quip($: EngineInterface, text: string): Promise<void> {
   }
 }
 
-/** Celebrates a new stage (hatching, evolving) or level; true when a new stage took the bubble. */
+/**
+ * Celebrates a new stage (hatching, evolving, coming round from grumpy) or level, and owns up to turning
+ * grumpy; true when a new stage took the bubble. Coming back from the stars is bringBackPet()'s to tell.
+ */
 async function celebrate($: EngineInterface, before: Pet, after: Pet): Promise<boolean> {
   const stage = stageOf(after)
-  if (stage !== stageOf(before) && stage !== 'angel') {
+  const was = stageOf(before)
+  if (stage !== was && stage !== 'angel' && was !== 'angel') {
+    if (stage === 'grumpy') {
+      await say($, 'hmph.')
+      $.ui.toast(`${after.name} grew grumpy from neglect. A working day of good care forgives a mistake.`)
+
+      return true
+    }
     await startAct($, 'sparkle')
-    if (stageOf(before) === 'egg') {
+    if (was === 'egg') {
       await say($, 'hello world!')
       $.ui.toast(`Your egg hatched! Say hi to ${after.name} with /pet`)
+    } else if (was === 'grumpy') {
+      await say($, 'I feel like myself again!')
+      $.ui.toast(`${after.name} is not grumpy anymore!`)
     } else {
-      await say($, `I'm a ${stage} now!`)
-      $.ui.toast(`${after.name} evolved into a ${stage}!`)
+      await say($, `I'm ${withArticle(stage)} now!`)
+      $.ui.toast(`${after.name} evolved into ${withArticle(stage)}!`)
     }
 
     return true
@@ -244,11 +292,17 @@ async function celebrate($: EngineInterface, before: Pet, after: Pet): Promise<b
   return false
 }
 
-/** Says and toasts what happened to the pet: hungry, sick, a poop; a new stage keeps the bubble. */
+/**
+ * Says and toasts what happened to the pet: hungry, sick, a poop, time for a break; a new stage keeps the
+ * bubble. While the sitter is on duty with coins for it, the toasts for what it will see to stay quiet.
+ */
 async function tell($: EngineInterface, events: readonly LifeEvent[], after: Pet, hasGrown: boolean): Promise<void> {
+  const purse = await read($, wallet)
+  const isCovered = purse !== null && purse.sitter === 'on' && purse.coins >= SITTER_FEE
   for (const event of events) {
-    if (EVENT_LINES[event] !== '' && !hasGrown) {
-      await say($, EVENT_LINES[event])
+    const line = event === 'break-time' ? breakLine(after.lastSeenAt - after.workSince, Math.random) : EVENT_LINES[event]
+    if (line !== '' && !hasGrown) {
+      await say($, line)
     }
     const toast =
       event === 'pooped'
@@ -256,7 +310,8 @@ async function tell($: EngineInterface, events: readonly LifeEvent[], after: Pet
           ? '{name} made a mess. No xp until /pet clean'
           : '{name} pooped! No xp until you clean it: /pet clean'
         : EVENT_TOASTS[event]
-    if (toast !== undefined) {
+    const isSeenTo = isCovered && (event === 'hungry' || event === 'sad' || event === 'sick' || (event === 'pooped' && after.poops >= 2))
+    if (toast !== undefined && !isSeenTo) {
       $.ui.toast(toast.replace('{name}', after.name))
     }
   }
@@ -286,7 +341,11 @@ async function sync($: EngineInterface): Promise<void> {
  * Applies `fn` to the wallet every open session shares, after opening the day: whichever session meets a
  * new day first pays its bonus, once. Null, and nothing spent, when `fn` refuses (a purchase short of coins).
  */
-async function withWallet($: EngineInterface, fn: (w: Wallet) => Wallet | null): Promise<Wallet | null> {
+function withWallet($: EngineInterface, fn: (w: Wallet) => Wallet | null): Promise<Wallet | null> {
+  return inLine(walletLine, () => changeWallet($, fn))
+}
+
+async function changeWallet($: EngineInterface, fn: (w: Wallet) => Wallet | null): Promise<Wallet | null> {
   const now = await $.clock.now()
   const opened = openDay(walletOf(await $.store.get(WALLET_KEY)), now)
   const after = fn(opened.wallet)
@@ -310,7 +369,11 @@ const earn = ($: EngineInterface, coins: number): Promise<Wallet | null> => with
  * or a meal elsewhere is never written over with a stale copy. Growing pays coins here, in
  * the session where it happened, and never again where sync only sees it.
  */
-async function change($: EngineInterface, fn: (p: Pet) => Pet): Promise<{ pet: Pet; hasGrown: boolean } | null> {
+function change($: EngineInterface, fn: (p: Pet) => Pet): Promise<{ pet: Pet; hasGrown: boolean } | null> {
+  return inLine(petLine, () => changePet($, fn))
+}
+
+async function changePet($: EngineInterface, fn: (p: Pet) => Pet): Promise<{ pet: Pet; hasGrown: boolean } | null> {
   await sync($)
   const now = await $.clock.now()
   const seen = { before: null as Pet | null }
@@ -325,7 +388,7 @@ async function change($: EngineInterface, fn: (p: Pet) => Pet): Promise<{ pet: P
   await $.store.set(STORE_KEY, after)
   const before = seen.before
   const stage = stageOf(after)
-  const isNewStage = stage !== stageOf(before) && stage !== 'angel' && stageOf(before) !== 'angel'
+  const isNewStage = stage !== stageOf(before) && stage !== 'angel' && stage !== 'grumpy' && stageOf(before) !== 'angel'
   const levels = Math.max(0, levelOf(after.xp) - levelOf(before.xp))
   const bonus = (isNewStage ? EARN.stage : 0) + levels * EARN.level
   if (bonus > 0) {
@@ -398,10 +461,22 @@ function setUpOnce($: EngineInterface, cwd?: string): Promise<void> {
   return settingUp
 }
 
-/** Someone is about: a typed prompt, a /pet, a band button. An idle spell before it counts as time away. */
+/**
+ * Someone is about: a typed prompt, a /pet, a band button. An idle spell before it counts as time away, and
+ * a break the pet asked for pays.
+ */
 async function touch($: EngineInterface): Promise<void> {
   const now = await $.clock.now()
-  await change($, p => active(p, now))
+  const out = { isHeeded: false }
+  const changed = await change($, p => {
+    out.isHeeded = isHeededBreak(p, now)
+
+    return active(p, now)
+  })
+  if (changed !== null && out.isHeeded) {
+    await earn($, EARN.rest)
+    await say($, `welcome back! breaks pay: +${EARN.rest} 🪙`)
+  }
 }
 
 async function tick($: EngineInterface): Promise<void> {
@@ -432,14 +507,24 @@ async function tick($: EngineInterface): Promise<void> {
 /**
  * The sitter's minute, in the session that lived it: one care when the pet needs it and the coins cover the
  * fee. The care is picked on the pet as change() finds it, so a meal another session just gave is never
- * given twice, and paid only once given. It plays the care's act and says nothing.
+ * given twice, and paid only once given. It plays the care's act and says nothing; short of the fee, it
+ * says so once.
  */
 async function babysit($: EngineInterface): Promise<void> {
   const purse = await read($, wallet)
   const current = await read($, pet)
-  if (purse === null || purse.sitter !== 'on' || purse.coins < SITTER_FEE || current === null || sitterAction(current) === null) {
+  if (purse === null || purse.sitter !== 'on' || current === null || sitterAction(current) === null) {
     return
   }
+  if (purse.coins < SITTER_FEE) {
+    if (!isSitterBroke) {
+      isSitterBroke = true
+      $.ui.toast(`The sitter is out of coins: ${current.name} needs you.`)
+    }
+
+    return
+  }
+  isSitterBroke = false
   const now = await $.clock.now()
   const out = { isDone: false, act: null as ActKind | null }
   const changed = await change($, p => {
@@ -459,6 +544,33 @@ async function babysit($: EngineInterface): Promise<void> {
   await withWallet($, w => spend(w, SITTER_FEE))
   if (out.act !== null) {
     await startAct($, out.act)
+  }
+}
+
+/** The pet's side of a tool call Claude ran: a success teaches it, a failure upsets it, a mess keeps the xp. */
+async function watchTool($: EngineInterface, tool: string, hasFailed: boolean): Promise<void> {
+  const changed = await change($, p => (hasFailed ? { ...p, happiness: fill(p.happiness - 1) } : gainXp(p, 1)))
+  const isPoopy = changed !== null && changed.pet.poops > 0
+  const line = isPoopy && !hasFailed ? pick(POOPY_LINES, Math.random) : toolLine(tool, hasFailed, Math.random)
+  await chatter($, line, hasFailed ? 0.8 : 0.3)
+}
+
+/** Warns when a rate-limit window of the plan reaches 80% and 95%, once each until the window resets. */
+async function warn($: EngineInterface, limits: readonly SessionRateLimit[]): Promise<void> {
+  for (const limit of limits) {
+    const mark = RATE_MARKS.find(at => limit.percentUsed >= at) ?? 0
+    const warned = warnedAt.get(limit.kind) ?? 0
+    if (limit.percentUsed < 50) {
+      warnedAt.delete(limit.kind)
+    } else if (mark > warned) {
+      warnedAt.set(limit.kind, mark)
+      const line = limitLine(limit.kind, mark)
+      if (canTalk(await read($, pet))) {
+        await say($, line)
+      } else {
+        $.ui.toast(line)
+      }
+    }
   }
 }
 
@@ -829,26 +941,25 @@ export const register: Register = (on, options) => {
   }).catch(($, e, next) => next(e))
 
   // Every tool Claude runs is a little show: successes teach it, errors upset it; a mess keeps the xp away.
+  // Claude has the result first, so no tool call waits on the pet.
   on('tool.call', async ($, e, next) => {
     const ran = await next(e)
     if (ran.deny === undefined) {
-      const hasFailed = ran.isError === true
-      const changed = await change($, p => (hasFailed ? { ...p, happiness: fill(p.happiness - 1) } : gainXp(p, 1)))
-      const isPoopy = changed !== null && changed.pet.poops > 0
-      const line = isPoopy && !hasFailed ? pick(POOPY_LINES, Math.random) : toolLine(String(e.tool), hasFailed, Math.random)
-      await chatter($, line, hasFailed ? 0.8 : 0.3)
+      later(() => watchTool($, String(e.tool), ran.isError === true))
     }
 
     return ran
   }).catch(($, e, next) => next(e))
 
   // What the person types pays a coin (up to the day's cap) and sometimes gets a joke while Claude starts
-  // on it; the prompt never waits for the model.
+  // on it; the prompt waits on neither the model nor the store.
   on('prompt.submit', async ($, e, next) => {
     const isTyped = (e.origin.kind === 'composer' || e.origin.kind === 'bridge') && !e.text.trimStart().startsWith('/')
     if (isTyped) {
-      await withWallet($, payPrompt)
-      await touch($)
+      later(async () => {
+        await withWallet($, payPrompt)
+        await touch($)
+      })
     }
     const isJokeTime = isTyped && Math.random() < QUIP_CHANCE
     if (isJokeTime && (await $.store.get(JOKES_KEY)) !== false) {
@@ -879,6 +990,22 @@ export const register: Register = (on, options) => {
       } else if (e.reason === 'error') {
         await change($, p => ({ ...p, happiness: fill(p.happiness - 3) }))
       }
+    }
+
+    return next(e)
+  })
+
+  // The plan's rate limits, as the engine measures them after each turn.
+  on('session.measure', async ($, e, next) => {
+    later(() => warn($, e.rateLimits))
+
+    return next(e)
+  })
+
+  // The conversation is about to be summarized: a little joke about memory, never in the way of it.
+  on('session.compact', async ($, e, next) => {
+    if (e.agentId === undefined && (e.trigger === 'manual' || e.trigger === 'auto')) {
+      later(() => chatter($, pick(COMPACT_LINES, Math.random), 1))
     }
 
     return next(e)

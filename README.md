@@ -16,10 +16,12 @@ Food and joy in hearts, energy, level, and coins. The pet talks in a speech bubb
 
 - **Egg.** A new pet starts as an egg and hatches a couple of minutes later.
 - **Needs.** Food, joy and energy drop a little every minute while a Claude Code session is open. Time away counts too, but only up to a cap: come back after a weekend and it is hungry, rested and happy to see you. An hour with no prompt typed and no `/pet` counts as time away as well, so a session left open overnight does it no harm.
-- **Growing up.** Every tool call Claude runs and every finished task earns experience. It goes from baby to child, teen and adult. A pet that was neglected too often grows into a grumpy adult.
+- **Growing up.** Every tool call Claude runs and every finished task earns experience. It goes from baby to child, teen and adult, and at level 20 a well kept adult becomes an elder in a shiny coat of its own. A pet that was neglected too often grows into a grumpy adult, but every working day of good care (eight lived hours with no neglect) forgives one mistake, and with five or fewer left it is itself again. `/pet` shows how long until the next one.
 - **Mess.** It poops after meals and now and then, the younger the more often. While there is poop around it earns no experience at all, and it will ask you to clean up. Leave the mess too long and it can get sick.
 - **Leaving.** Neglected for twelve hours in a row while you are around, it flies off to the pixel stars. `/pet revive` brings it back, or `/pet new` gives you a new egg. A hired sitter keeps that from happening while your coins last.
-- **Talking.** It reacts to what Claude does (shell commands, edits, errors, long tasks finishing) in its bubble.
+- **Breaks.** Ten minutes or more with no prompt is a break, and it cheers the pet up. After an hour and a half at the keyboard with no break it suggests one, then again every hour, and a break it asked for pays 10 coins.
+- **Limits.** When a rate-limit window of your plan reaches 80% or 95%, it says so in its bubble, once each.
+- **Talking.** It reacts to what Claude does (shell commands, edits, errors, long tasks finishing, a compaction) in its bubble.
 
 Every open session shows the same pet. They share one save and pick up each other's changes within about ten seconds, alerts included.
 
@@ -37,15 +39,16 @@ Coins come from work, never from the pet's own commands:
 | Every 7th day in a row | +50 |
 | The pet reaches a new level | +20 |
 | The pet reaches a new stage | +50 |
+| You take a break when the pet asks for one | +10 |
 
 A typical working day brings in about 200. `/pet shop` lists what they buy:
 
 - **Skins.** Seven species, each with its own baby, child, teen and adult drawings: devling (free), chick, cat, frog, ghost, blob and cube, from 150 to 500 coins. A skin changes the look only: the pet keeps its name, level and stage. Bought skins are yours for good; switch between them for free.
 - **Hearts.** A new pet holds three hearts of food and three of joy. A fourth costs 150 and a fifth 300. Each heart holds 25 points more, so the bar lasts longer between meals or games.
 - **Revive.** 200 coins bring a pet back from the pixel stars at the stage and level it left with.
-- **Sitter.** 1000 coins hire a little robot for the days you are too busy. When food or joy drops under 10, at two poops, or when the pet is sick, it steps in for 5 coins a care. It never plays, earns the pet no experience and leaves a single poop to you. Its 🤖 sits beside your coins in the footer while it is on, dim when they no longer cover its fee. `/pet sitter off` gives it a break, `/pet sitter on` puts it back to work.
+- **Sitter.** 1000 coins hire a little robot for the days you are too busy. When food or joy drops under 10, at two poops, or when the pet is sick, it steps in for 5 coins a care. It never plays, earns the pet no experience and leaves a single poop to you. Its 🤖 sits beside your coins in the footer while it is on, dim when they no longer cover its fee. While it is on, the toasts for what it will see to stay quiet, and it tells you once when your coins run out. `/pet sitter off` gives it a break, `/pet sitter on` puts it back to work.
 
-<p align="center"><img src="docs/species.svg" alt="Every Devling species at every stage, from egg to angel: devling, chick, cat, frog, ghost, blob and cube" width="770"></p>
+<p align="center"><img src="docs/species.svg" alt="Every Devling species at every stage, from egg to angel: devling, chick, cat, frog, ghost, blob and cube" width="854"></p>
 
 ## Requirements
 

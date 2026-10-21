@@ -1,8 +1,8 @@
 import type { Stage } from './life'
 
 // The species a pet can be drawn as. Each draws its own baby, child, teen and adult in six pixel rows
-// (three terminal rows, two pixels per character): a color per letter, '.' empty. The egg, the grumpy
-// adult and the angel are derived from those four, so a new species is four drawings and a palette.
+// (three terminal rows, two pixels per character): a color per letter, '.' empty. The egg, the elder,
+// the grumpy adult and the angel are derived from those four, so a new species is four drawings and a palette.
 
 /** A frame's pixels, top to bottom: a color, or null where the lane shows through. */
 export type Pixels = (string | null)[][]
@@ -28,6 +28,8 @@ export const DEFAULT_SKIN = 'devling'
 const EYE = '#24120b'
 const SHELL = '#f3e3c3'
 const HALO = '#f5d76e'
+// How far round the color wheel an elder's coat is turned.
+const ELDER_TURN = 35
 
 const SKINS: Readonly<Record<string, Skin>> = {
   devling: {
@@ -151,6 +153,31 @@ export const mix = (color: string, target: string, amount: number): string => {
   return toHex(rgb(color).map((n, i) => n + ((to[i] ?? n) - n) * amount))
 }
 
+/**
+ * The same color turned `degrees` round the color wheel, a touch brighter: the elder's coat, which stays as
+ * clean and flat as the species' own, where a tint toward one color would turn blues and greys muddy.
+ */
+const shine = (color: string, degrees: number): string => {
+  const [r = 0, g = 0, b = 0] = rgb(color).map(n => n / 255)
+  const max = Math.max(r, g, b)
+  const min = Math.min(r, g, b)
+  const light = (max + min) / 2
+  const chroma = max - min
+  if (chroma === 0) {
+    return color
+  }
+  const sat = chroma / (1 - Math.abs(2 * light - 1))
+  const hue = max === r ? ((g - b) / chroma) % 6 : max === g ? (b - r) / chroma + 2 : (r - g) / chroma + 4
+  const turned = (((hue * 60 + degrees) % 360) + 360) % 360
+  const lit = Math.min(0.85, light * 1.08)
+  const c = (1 - Math.abs(2 * lit - 1)) * Math.min(1, sat * 1.15)
+  const x = c * (1 - Math.abs(((turned / 60) % 2) - 1))
+  const m = lit - c / 2
+  const [r1, g1, b1] = [[c, x, 0], [x, c, 0], [0, c, x], [0, x, c], [x, 0, c], [c, 0, x]][Math.floor(turned / 60)] ?? [0, 0, 0]
+
+  return toHex([r1, g1, b1].map(n => ((n ?? 0) + m) * 255))
+}
+
 /** Washed out and darker: the grumpy adult. */
 const grey = (color: string): string => {
   const [r = 0, g = 0, b = 0] = rgb(color)
@@ -163,7 +190,7 @@ type Look = { grid: readonly string[]; colors: Readonly<Record<string, string>> 
 
 const looks = new Map<string, Look>()
 
-/** What a species looks like at a stage: its own drawing, or the egg, grumpy and angel made from them. */
+/** What a species looks like at a stage: its own drawing, or the egg, elder, grumpy and angel made from them. */
 function lookOf(id: string, stage: Stage): Look {
   const key = `${id}:${stage}`
   const cached = looks.get(key)
@@ -178,6 +205,10 @@ function lookOf(id: string, stage: Stage): Look {
       grid: ['..cc..', '.cccc.', 'cScccc', 'cccccc', 'ccccSc', '.cccc.'],
       colors: { c: SHELL, S: skin.spot ?? Object.values(colors)[0] ?? SHELL },
     }
+  } else if (stage === 'elder') {
+    // The adult in a shiny coat of another hue, its eyes left as they are.
+    const coat = Object.entries(colors).map(([letter, color]) => [letter, skin.eyes.includes(letter) ? color : shine(color, ELDER_TURN)] as const)
+    look = { grid: drawings.adult, colors: Object.fromEntries(coat) }
   } else if (stage === 'grumpy') {
     look = { grid: drawings.adult, colors: recolor(colors, grey) }
   } else if (stage === 'angel') {

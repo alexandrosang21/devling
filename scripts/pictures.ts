@@ -40,7 +40,7 @@ const NOW = Date.UTC(2026, 0, 1)
 const SAID = 'it is not a bug, it is a pet'
 const PROMPT = 'fix the category filter'
 
-const STAGES: readonly Stage[] = ['egg', 'baby', 'child', 'teen', 'adult', 'grumpy', 'angel']
+const STAGES: readonly Stage[] = ['egg', 'baby', 'child', 'teen', 'adult', 'elder', 'grumpy', 'angel']
 
 const escape = (text: string): string => text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
 
