@@ -4,7 +4,7 @@ import type { On } from 'claude-code'
 
 import { DONE_LINES, NEW_TASK_LINES, breakLine, bubbleLines, cleanQuip, sceneOf, xpBar } from '../hooks/art'
 import { dayOf } from '../hooks/economy'
-import { active, egg, live, revive, sitterAction, stageOf } from '../hooks/life'
+import { active, egg, live, perform, revive, sitterAction, stageOf } from '../hooks/life'
 import type { Pet, Wallet } from '../types'
 
 const MINUTE = 60_000
@@ -655,6 +655,7 @@ describe('sitter', () => {
     expect(sitterAction({ ...p, hunger: 9, poops: 2 })).toBe('clean')
     expect(sitterAction({ ...p, poops: 2, isSick: true })).toBe('meds')
     expect(sitterAction({ ...p, hunger: 0, isAsleep: true })).toBeNull()
+    expect(sitterAction({ ...p, isSick: true, isAsleep: true })).toBe('meds')
     expect(sitterAction({ ...p, hunger: 0, hatchedAt: null })).toBeNull()
   })
 
@@ -746,10 +747,21 @@ describe('growing old', () => {
     expect(stageOf(p)).toBe('adult')
   })
 
-  test('a neglected minute starts the day of good care over', () => {
+  test('only neglect long enough to be a mistake starts the day of good care over', () => {
     const p: Pet = { ...egg('Mochi', 0), hatchedAt: 0, careMistakes: 2, goodMinutes: 400 }
-    expect(live({ ...p, hunger: 0 }, MINUTE, () => 0.99).pet.goodMinutes).toBe(0)
     expect(live({ ...p, hunger: 90 }, MINUTE, () => 0.99).pet.goodMinutes).toBe(401)
+    // Sick a minute, and medicine on the way: the day goes on.
+    expect(live({ ...p, isSick: true }, MINUTE, () => 0.99).pet.goodMinutes).toBe(401)
+    const lapsed = live({ ...p, hunger: 0, neglect: 14 }, MINUTE, () => 0.99).pet
+    expect([lapsed.goodMinutes, lapsed.careMistakes]).toEqual([0, 3])
+  })
+
+  test('medicine and a clean-up need no waking, a meal does', () => {
+    const asleep: Pet = { ...egg('Mochi', 0), hatchedAt: 0, isAsleep: true, isSick: true, poops: 2 }
+    const cured = perform(asleep, 'meds', 0, () => 0.5).pet
+    expect([cured.isSick, cured.isAsleep]).toEqual([false, true])
+    expect(perform(asleep, 'clean', 0, () => 0.5).pet.poops).toBe(0)
+    expect(perform(asleep, 'feed', 0, () => 0.5).line).toContain('zZz')
   })
 
   test('a well kept adult becomes an elder at level 20, in a golden coat', () => {

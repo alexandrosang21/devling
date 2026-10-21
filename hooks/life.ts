@@ -7,7 +7,8 @@ export const MINUTE = 60_000
 export const MAX_POOPS = 4
 const HATCH_MS = 2 * MINUTE
 const MISTAKE_AFTER_MIN = 15
-// More care mistakes than this make a grumpy adult; a working day of good care, in lived minutes, forgives one.
+// More care mistakes than this make a grumpy adult. A working day of lived minutes with no spell of neglect
+// long enough to be a mistake forgives one: a sickness treated within the quarter hour does not count.
 const GRUMPY_AFTER = 5
 const FORGIVE_AFTER_MIN = 8 * 60
 // A grown pet of this level, cared for well enough not to be grumpy, becomes an elder.
@@ -302,7 +303,7 @@ export function live(p: Pet, now: number, roll: Roll): { pet: Pet; events: LifeE
   if (next.neglect === MISTAKE_AFTER_MIN) {
     next.careMistakes += 1
   }
-  next.goodMinutes = isNeglected ? 0 : p.goodMinutes + 1
+  next.goodMinutes = next.neglect >= MISTAKE_AFTER_MIN ? 0 : p.goodMinutes + 1
   if (next.goodMinutes >= FORGIVE_AFTER_MIN) {
     next.goodMinutes = 0
     if (next.careMistakes > 0) {
@@ -325,7 +326,9 @@ export function perform(p: Pet, action: Action, now: number, roll: Roll): { pet:
   const stage = stageOf(p)
   if (stage === 'angel') return stay(`${p.name} lives among the pixel stars now. /pet revive or /pet new`)
   if (stage === 'egg') return stay('*the egg wiggles*')
-  if (p.isAsleep && action !== 'sleep' && action !== 'wake') return stay('zZz... (/pet wake)')
+  // Medicine and a clean-up need no waking, so a sickness caught asleep never lasts the nap; a meal or a game does.
+  const isQuiet = action === 'sleep' || action === 'wake' || action === 'meds' || action === 'clean'
+  if (p.isAsleep && !isQuiet) return stay('zZz... (/pet wake)')
 
   switch (action) {
     case 'feed':
@@ -391,12 +394,16 @@ export function perform(p: Pet, action: Action, now: number, roll: Roll): { pet:
 const SITTER_BELOW = 10
 const SITTER_POOPS = 2
 
-/** The one care the sitter gives this minute, the most urgent first; none to an egg, an angel or a sleeper. */
+/**
+ * The one care the sitter gives this minute, the most urgent first; none to an egg or an angel, and to a
+ * sleeper only what needs no waking.
+ */
 export function sitterAction(p: Pet): Action | null {
   const stage = stageOf(p)
-  if (stage === 'egg' || stage === 'angel' || p.isAsleep) return null
+  if (stage === 'egg' || stage === 'angel') return null
   if (p.isSick) return 'meds'
   if (p.poops >= SITTER_POOPS) return 'clean'
+  if (p.isAsleep) return null
   if (p.hunger < SITTER_BELOW) return 'feed'
   if (p.happiness < SITTER_BELOW) return 'snack'
 
