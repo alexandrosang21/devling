@@ -32,7 +32,7 @@ const NUDGE_AFTER_MS = 90 * MINUTE
 const NUDGE_EVERY_MS = 60 * MINUTE
 
 export type Stage = 'egg' | 'baby' | 'child' | 'teen' | 'adult' | 'elder' | 'grumpy' | 'angel'
-export type LifeEvent = 'hatched' | 'pooped' | 'sick' | 'fell-asleep' | 'woke' | 'hungry' | 'sad' | 'left' | 'forgiven' | 'break-time'
+export type LifeEvent = 'hatched' | 'pooped' | 'sick' | 'fell-asleep' | 'woke' | 'hungry' | 'sad' | 'left' | 'forgiven' | 'break-time' | 'sitter'
 export type Action = 'feed' | 'snack' | 'play' | 'clean' | 'meds' | 'sleep' | 'wake'
 export type Roll = () => number
 
@@ -95,6 +95,7 @@ export function bringBack(p: Pet, now: number): Pet {
     isAsleep: false,
     poops: 0,
     poopDueAt: null,
+    poopedAt: null,
     lastSeenAt: now,
   }
 }
@@ -107,6 +108,8 @@ export function egg(name: string, now: number, skin = DEFAULT_SKIN, foodHearts =
     energy: 100,
     xp: 0,
     poops: 0,
+    poopedAt: null,
+    sitterVisit: null,
     isSick: false,
     isAsleep: false,
     careMistakes: 0,
@@ -154,6 +157,9 @@ export function revive(value: unknown, now: number): Pet | null {
     // A pet from before idle spells was last about when it was last seen.
     lastActiveAt: num(saved.lastActiveAt, num(saved.lastSeenAt, now)),
     poopDueAt: saved.poopDueAt ?? null,
+    // A pet from before the sitter's five minutes has had its poop since it was last seen.
+    poopedAt: saved.poopedAt ?? (num(saved.poops, 0) > 0 ? num(saved.lastSeenAt, now) : null),
+    sitterVisit: saved.sitterVisit ?? null,
     leftAt: saved.leftAt ?? null,
     // A pet from before skins is the original species.
     skin: typeof saved.skin === 'string' && isSkin(saved.skin) ? saved.skin : DEFAULT_SKIN,
@@ -187,6 +193,7 @@ export function eventsBetween(before: Pet, after: Pet): LifeEvent[] {
   if (before.hunger >= 25 && after.hunger < 25) events.push('hungry')
   if (before.happiness >= 25 && after.happiness < 25) events.push('sad')
   if (after.careMistakes < before.careMistakes) events.push('forgiven')
+  if (after.sitterVisit !== null && after.sitterVisit.at !== before.sitterVisit?.at) events.push('sitter')
   if (isNudgeDue(after, after.lastSeenAt)) events.push('break-time')
 
   return events
@@ -200,6 +207,7 @@ export function comeBack(p: Pet, now: number): Pet {
   const minutes = Math.max(0, (now - p.lastSeenAt) / MINUTE)
   const lose = (value: number, perMinute: number): number =>
     Math.max(Math.min(value, AWAY_FLOOR), value - Math.min(perMinute * minutes, AWAY_LOSS_CAP))
+  const poops = minutes >= 120 ? Math.min(MAX_POOPS, p.poops + 1) : p.poops
 
   return {
     ...p,
@@ -207,8 +215,9 @@ export function comeBack(p: Pet, now: number): Pet {
     happiness: lose(p.happiness, 0.4),
     energy: minutes >= 60 ? 100 : p.energy,
     isAsleep: false,
-    poops: minutes >= 120 ? Math.min(MAX_POOPS, p.poops + 1) : p.poops,
+    poops,
     poopDueAt: null,
+    poopedAt: poops > 0 ? (p.poopedAt ?? now) : null,
     hatchedAt: p.hatchedAt ?? (now - p.bornAt >= HATCH_MS ? now : null),
     lastSeenAt: now,
     lastActiveAt: now,
@@ -289,6 +298,11 @@ export function live(p: Pet, now: number, roll: Roll): { pet: Pet; events: LifeE
     next.poops += 1
     events.push('pooped')
   }
+  if (next.poops === 0) {
+    next.poopedAt = null
+  } else if (next.poopedAt === null) {
+    next.poopedAt = now
+  }
 
   if (!next.isSick && roll() < 0.004 * next.poops + (next.hunger === 0 ? 0.03 : 0)) {
     next.isSick = true
@@ -366,7 +380,7 @@ export function perform(p: Pet, action: Action, now: number, roll: Roll): { pet:
     case 'clean':
       if (p.poops === 0) return stay('already squeaky clean!')
 
-      return { pet: gainXp({ ...p, poops: 0, happiness: fill(p.happiness + 5) }, 1), line: 'fresh and clean! xp is back', act: 'clean' }
+      return { pet: gainXp({ ...p, poops: 0, poopedAt: null, happiness: fill(p.happiness + 5) }, 1), line: 'fresh and clean! xp is back', act: 'clean' }
     case 'meds':
       if (!p.isSick) {
         return { pet: { ...p, happiness: fill(p.happiness - 5) }, line: "yuck! I'm not even sick", act: null }
@@ -389,20 +403,20 @@ export function perform(p: Pet, action: Action, now: number, roll: Roll): { pet:
 }
 
 // The sitter steps in well under the alerts at 25, so the person hears first and has about half an hour to
-// answer, and still before neglect counts: food or joy at zero, sick, or three poops. One poop it leaves to
-// the person, with the xp it holds back.
+// answer, and still before neglect counts: food or joy at zero, sick, or three poops. A poop it leaves five
+// minutes, for the person to clean first if they are about, then no xp is held back for long.
 const SITTER_BELOW = 10
-const SITTER_POOPS = 2
+const SITTER_POOP_WAIT_MS = 5 * MINUTE
 
 /**
  * The one care the sitter gives this minute, the most urgent first; none to an egg or an angel, and to a
  * sleeper only what needs no waking.
  */
-export function sitterAction(p: Pet): Action | null {
+export function sitterAction(p: Pet, now: number): Action | null {
   const stage = stageOf(p)
   if (stage === 'egg' || stage === 'angel') return null
   if (p.isSick) return 'meds'
-  if (p.poops >= SITTER_POOPS) return 'clean'
+  if (p.poops > 0 && now - (p.poopedAt ?? now) >= SITTER_POOP_WAIT_MS) return 'clean'
   if (p.isAsleep) return null
   if (p.hunger < SITTER_BELOW) return 'feed'
   if (p.happiness < SITTER_BELOW) return 'snack'
@@ -410,11 +424,15 @@ export function sitterAction(p: Pet): Action | null {
   return null
 }
 
-/** The sitter's care: what the person's would do, without the xp. Null when the pet needs none. */
+/**
+ * The sitter's care: what the person's would do, without the xp, and marked as its visit so every open
+ * session can show it. Null when the pet needs none.
+ */
 export function sit(p: Pet, now: number, roll: Roll): { pet: Pet; act: ActKind | null } | null {
-  const action = sitterAction(p)
+  const action = sitterAction(p, now)
   if (action === null) return null
   const done = perform(p, action, now, roll)
+  const sitterVisit = done.act === null ? p.sitterVisit : { act: done.act, at: now }
 
-  return { pet: { ...done.pet, xp: p.xp }, act: done.act }
+  return { pet: { ...done.pet, xp: p.xp, sitterVisit }, act: done.act }
 }

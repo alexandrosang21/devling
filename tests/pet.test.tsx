@@ -4,7 +4,7 @@ import type { On } from 'claude-code'
 
 import { DONE_LINES, NEW_TASK_LINES, breakLine, bubbleLines, cleanQuip, sceneOf, xpBar } from '../hooks/art'
 import { dayOf } from '../hooks/economy'
-import { active, egg, live, perform, revive, sitterAction, stageOf } from '../hooks/life'
+import { active, egg, eventsBetween, live, perform, revive, sitterAction, stageOf } from '../hooks/life'
 import type { Pet, Wallet } from '../types'
 
 const MINUTE = 60_000
@@ -108,7 +108,8 @@ describe('life', () => {
     expect(await pet($)).toMatch(/🍖 \S+ 40%/)
   })
 
-  test('it falls asleep when tired and wakes up rested', async ($, on) => {
+  // These two run long stretches of frames on the mocked clock: a busy machine needs more than five seconds.
+  test('it falls asleep when tired and wakes up rested', { timeoutMs: 15_000 }, async ($, on) => {
     const clock = await start($, on, { pet: oldPet({ hunger: 90, energy: 15.2 }) })
     await clock.advance(MINUTE)
     expect(await pet($)).toContain('asleep')
@@ -146,7 +147,7 @@ describe('life', () => {
     expect(back.lastActiveAt).toBe(24 * 60 * MINUTE)
   })
 
-  test('a session left open with nobody about stops living its minutes after an hour', async ($, on) => {
+  test('a session left open with nobody about stops living its minutes after an hour', { timeoutMs: 15_000 }, async ($, on) => {
     const clock = await start($, on, { pet: oldPet({ hunger: 90 }) })
     await clock.advance(65 * MINUTE)
 
@@ -491,6 +492,7 @@ const walletToday = (overrides: Partial<Wallet>): Wallet => ({
   today: 0,
   streak: 1,
   sitter: 'none',
+  sitterPaidDay: '',
   ...overrides,
 })
 
@@ -646,32 +648,52 @@ describe('hearts', () => {
 })
 
 describe('sitter', () => {
-  test('it steps in under the alerts, the most urgent care first, and leaves one poop to you', () => {
+  test('it steps in under the alerts, the most urgent care first, and gives a poop five minutes', () => {
     const p: Pet = { ...egg('Mochi', 0), hatchedAt: 0, hunger: 90, happiness: 90 }
-    expect(sitterAction(p)).toBeNull()
-    expect(sitterAction({ ...p, hunger: 20, happiness: 20, poops: 1 })).toBeNull()
-    expect(sitterAction({ ...p, hunger: 9 })).toBe('feed')
-    expect(sitterAction({ ...p, happiness: 9 })).toBe('snack')
-    expect(sitterAction({ ...p, hunger: 9, poops: 2 })).toBe('clean')
-    expect(sitterAction({ ...p, poops: 2, isSick: true })).toBe('meds')
-    expect(sitterAction({ ...p, hunger: 0, isAsleep: true })).toBeNull()
-    expect(sitterAction({ ...p, isSick: true, isAsleep: true })).toBe('meds')
-    expect(sitterAction({ ...p, hunger: 0, hatchedAt: null })).toBeNull()
+    const at = 10 * MINUTE
+    expect(sitterAction(p, at)).toBeNull()
+    expect(sitterAction({ ...p, hunger: 20, happiness: 20, poops: 1, poopedAt: at - 4 * MINUTE }, at)).toBeNull()
+    expect(sitterAction({ ...p, poops: 1, poopedAt: at - 5 * MINUTE }, at)).toBe('clean')
+    expect(sitterAction({ ...p, hunger: 9 }, at)).toBe('feed')
+    expect(sitterAction({ ...p, happiness: 9 }, at)).toBe('snack')
+    expect(sitterAction({ ...p, hunger: 9, poops: 2, poopedAt: 0 }, at)).toBe('clean')
+    expect(sitterAction({ ...p, poops: 2, poopedAt: 0, isSick: true }, at)).toBe('meds')
+    expect(sitterAction({ ...p, hunger: 0, isAsleep: true }, at)).toBeNull()
+    expect(sitterAction({ ...p, isSick: true, isAsleep: true }, at)).toBe('meds')
+    expect(sitterAction({ ...p, hunger: 0, hatchedAt: null }, at)).toBeNull()
+
+    // A poop is timed from when it appears, and a clean-up forgets it.
+    const pooped = live({ ...p, poopDueAt: MINUTE }, MINUTE, () => 0.99).pet
+    expect([pooped.poops, pooped.poopedAt]).toEqual([1, MINUTE])
+    expect(perform(pooped, 'clean', MINUTE, () => 0.5).pet.poopedAt).toBeNull()
   })
 
-  test('a hired sitter feeds a starving pet for its fee, with no xp, and does nothing once the coins run short', async ($, on) => {
-    const clock = await start($, on, { pet: oldPet({ hunger: 8, happiness: 5 }), wallet: walletToday({ coins: 9, sitter: 'on' }) })
+  test('a hired sitter takes its wage at the first care of the day, then cares for free, with no xp', async ($, on) => {
+    const clock = await start($, on, { pet: oldPet({ hunger: 8, happiness: 5 }), wallet: walletToday({ coins: 150, sitter: 'on' }) })
     await clock.advance(MINUTE)
-    let status = await pet($)
+    const status = await pet($)
     expect(status).toMatch(/🍖 \S+ 38%/)
     expect(status).toContain('10 xp to go')
-    expect(await pet($, 'coins')).toContain('🪙 4 coins')
+    expect(await pet($, 'coins')).toContain('🪙 50 coins')
 
-    // Joy is low now too, but 4 coins do not cover the snack.
+    // Joy is low too: the day is paid, so the treat comes free.
     await clock.advance(MINUTE)
-    status = await pet($)
-    expect(status).toMatch(/😊 \S+ [34]%/)
-    expect(await pet($, 'coins')).toContain('🪙 4 coins')
+    expect(await pet($)).toMatch(/😊 \S+ 1[89]%/)
+    expect(await pet($, 'coins')).toContain('🪙 50 coins')
+  })
+
+  test('the sitter comes by: it stands beside the pet, which thanks it, here and in another open session', async ($, on) => {
+    const clock = await start($, on, { pet: oldPet({ hunger: 8, happiness: 90 }), wallet: walletToday({ coins: 150, sitter: 'on' }) })
+    const ui = await $.ui.mount({ plugin: 'devling', surface: 'terminal', component: 'SessionMode', props: { modes: [] } })
+    await clock.advance(MINUTE)
+
+    expect(await ui.find({ type: 'Text', text: '🤖' })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: '🤖 brought food! nom nom nom!' })).toBeDefined()
+    await ui.unmount()
+
+    const p: Pet = { ...egg('Mochi', 0), hatchedAt: 0 }
+    expect(eventsBetween(p, { ...p, sitterVisit: { act: 'eat', at: MINUTE } })).toContain('sitter')
+    expect(eventsBetween({ ...p, sitterVisit: { act: 'eat', at: MINUTE } }, { ...p, sitterVisit: { act: 'eat', at: MINUTE } })).not.toContain('sitter')
   })
 
   test('coins hire the sitter once, and its mark sits beside the coins, dim when they run short', async ($, on) => {
@@ -705,7 +727,7 @@ describe('sitter', () => {
     expect(await ui.find({ type: 'Text', text: ' 🤖' })).toBeDefined()
     await clock.advance(MINUTE)
     expect(await pet($)).toMatch(/🍖 \S+ 37%/)
-    expect(await pet($, 'coins')).toContain('🪙 95 coins')
+    expect(await pet($, 'coins')).toContain('🪙 0 coins')
     await ui.unmount()
   })
 

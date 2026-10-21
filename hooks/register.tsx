@@ -10,6 +10,7 @@ import {
   NEW_TASK_LINES,
   POOP,
   POOP_COLOR,
+  SITTER_LINES,
   breakLine,
   bubbleLines,
   cleanQuip,
@@ -25,7 +26,21 @@ import {
   withArticle,
 } from './art'
 import type { Row, Segment } from './art'
-import { EARN, REVIVE_PRICE, SITTER_FEE, SITTER_PRICE, heartPrice, openDay, pay, payPrompt, spend, taskPay, walletOf } from './economy'
+import {
+  EARN,
+  REVIVE_PRICE,
+  SITTER_PRICE,
+  SITTER_WAGE,
+  canSitterWork,
+  heartPrice,
+  openDay,
+  pay,
+  payPrompt,
+  paySitter,
+  spend,
+  taskPay,
+  walletOf,
+} from './economy'
 import {
   HEART,
   MAX_HEARTS,
@@ -144,6 +159,8 @@ const EVENT_LINES: Record<LifeEvent, string> = {
   forgiven: 'thanks for looking after me ♥',
   // Said with how long it has been, by breakLine().
   'break-time': '',
+  // Said by showVisit(), with what the sitter brought.
+  sitter: '',
 }
 
 const EVENT_TOASTS: Partial<Record<LifeEvent, string>> = {
@@ -182,8 +199,9 @@ const HELP = [
   '  /pet upgrade food    one more food heart, up to 5: longer between meals',
   '  /pet upgrade joy     one more joy heart, up to 5: longer between games',
   `  /pet revive          bring it back from the pixel stars (${REVIVE_PRICE} coins)`,
-  '  /pet buy sitter      a robot that steps in when food or joy drops under 10, at two poops or',
-  `                       when it is sick: ${SITTER_PRICE} coins once, then ${SITTER_FEE} a care, and no xp from it`,
+  '  /pet buy sitter      a robot that feeds it or cheers it up under 10, cleans a poop after five',
+  `                       minutes and doctors it when sick: ${SITTER_PRICE} coins once, then ${SITTER_WAGE} a day it`,
+  '                       works. Its care earns no xp',
   '  /pet sitter on|off   put the sitter to work, or give it a break',
   'Settings',
   '  /pet name <name>     rename it',
@@ -201,9 +219,9 @@ async function say($: EngineInterface, text: string): Promise<void> {
   await update($, speech, () => ({ text, untilFrame: at + SPEECH_FRAMES }))
 }
 
-async function startAct($: EngineInterface, kind: ActKind): Promise<void> {
+async function startAct($: EngineInterface, kind: ActKind, isSitter = false): Promise<void> {
   const at = await read($, frame)
-  await update($, act, () => ({ kind, startFrame: at }))
+  await update($, act, () => (isSitter ? { kind, startFrame: at, isSitter } : { kind, startFrame: at }))
   if (kind === 'play') {
     await startDash($)
   }
@@ -298,8 +316,12 @@ async function celebrate($: EngineInterface, before: Pet, after: Pet): Promise<b
  */
 async function tell($: EngineInterface, events: readonly LifeEvent[], after: Pet, hasGrown: boolean): Promise<void> {
   const purse = await read($, wallet)
-  const isCovered = purse !== null && purse.sitter === 'on' && purse.coins >= SITTER_FEE
+  const isCovered = purse !== null && canSitterWork(purse)
   for (const event of events) {
+    if (event === 'sitter' && after.sitterVisit !== null) {
+      await showVisit($, after, after.sitterVisit.act)
+      continue
+    }
     const line = event === 'break-time' ? breakLine(after.lastSeenAt - after.workSince, Math.random) : EVENT_LINES[event]
     if (line !== '' && !hasGrown) {
       await say($, line)
@@ -310,7 +332,7 @@ async function tell($: EngineInterface, events: readonly LifeEvent[], after: Pet
           ? '{name} made a mess. No xp until /pet clean'
           : '{name} pooped! No xp until you clean it: /pet clean'
         : EVENT_TOASTS[event]
-    const isSeenTo = isCovered && (event === 'hungry' || event === 'sad' || event === 'sick' || (event === 'pooped' && after.poops >= 2))
+    const isSeenTo = isCovered && (event === 'hungry' || event === 'sad' || event === 'sick' || event === 'pooped')
     if (toast !== undefined && !isSeenTo) {
       $.ui.toast(toast.replace('{name}', after.name))
     }
@@ -505,18 +527,25 @@ async function tick($: EngineInterface): Promise<void> {
 }
 
 /**
- * The sitter's minute, in the session that lived it: one care when the pet needs it and the coins cover the
- * fee. The care is picked on the pet as change() finds it, so a meal another session just gave is never
- * given twice, and paid only once given. It plays the care's act and says nothing; short of the fee, it
- * says so once.
+ * The sitter's minute, in the session that lived it: one care when the pet needs it, its day's wage paid at
+ * the first. The care is picked on the pet as change() finds it, so a meal another session just gave is
+ * never given twice. Short of the wage, it says so once.
  */
 async function babysit($: EngineInterface): Promise<void> {
   const purse = await read($, wallet)
   const current = await read($, pet)
-  if (purse === null || purse.sitter !== 'on' || current === null || sitterAction(current) === null) {
+  const now = await $.clock.now()
+  if (purse === null || purse.sitter !== 'on' || current === null || sitterAction(current, now) === null) {
     return
   }
-  if (purse.coins < SITTER_FEE) {
+  const out = { isNewDay: false }
+  const paid = await withWallet($, w => {
+    const after = paySitter(w)
+    out.isNewDay = after !== null && after !== w
+
+    return after
+  })
+  if (paid === null) {
     if (!isSitterBroke) {
       isSitterBroke = true
       $.ui.toast(`The sitter is out of coins: ${current.name} needs you.`)
@@ -525,25 +554,27 @@ async function babysit($: EngineInterface): Promise<void> {
     return
   }
   isSitterBroke = false
-  const now = await $.clock.now()
-  const out = { isDone: false, act: null as ActKind | null }
+  if (out.isNewDay) {
+    $.ui.toast(`The sitter starts its day: -${SITTER_WAGE} 🪙`)
+  }
+  const visit = { act: null as ActKind | null }
   const changed = await change($, p => {
     const care = sit(p, now, Math.random)
-    if (care === null) {
-      return p
-    }
-    out.isDone = true
-    out.act = care.act
+    visit.act = care?.act ?? null
 
-    return care.pet
+    return care?.pet ?? p
   })
-  if (changed === null || !out.isDone) {
-    return
+  if (changed !== null && visit.act !== null) {
+    await showVisit($, changed.pet, visit.act)
   }
-  // Spent elsewhere in the same breath, the coins fall short: that one care was on the house.
-  await withWallet($, w => spend(w, SITTER_FEE))
-  if (out.act !== null) {
-    await startAct($, out.act)
+}
+
+/** The sitter at work where the person can see it: beside the pet while the care plays, and the pet's thanks. */
+async function showVisit($: EngineInterface, p: Pet, kind: ActKind): Promise<void> {
+  await startAct($, kind, true)
+  const line = SITTER_LINES[kind]
+  if (line !== undefined && canTalk(p)) {
+    await say($, line)
   }
 }
 
@@ -751,6 +782,8 @@ async function upgrade($: EngineInterface, bar: 'food' | 'joy'): Promise<string>
   return `${current.name} has ${hearts + 1} ${bar} hearts now, ${after.coins} 🪙 left.`
 }
 
+const SITTER_DUTIES = `It feeds it or cheers it up under 10, cleans a poop after five minutes and doctors it when sick, for ${SITTER_WAGE} 🪙 on each day it works.`
+
 /** Hires the sitter, once and for good. */
 async function hire($: EngineInterface): Promise<string> {
   const out = { refusal: '' }
@@ -774,7 +807,7 @@ async function hire($: EngineInterface): Promise<string> {
   }
   await say($, 'a robot friend!')
 
-  return `Hired the sitter for ${SITTER_PRICE} 🪙, ${after.coins} left. When food or joy drops under 10, at two poops or when it is sick, it steps in for ${SITTER_FEE} 🪙 a care.`
+  return `Hired the sitter for ${SITTER_PRICE} 🪙, ${after.coins} left. ${SITTER_DUTIES}`
 }
 
 /** Puts the hired sitter to work or gives it a break, saved for every session; with no choice, says which it is on. */
@@ -794,7 +827,7 @@ async function setSitter($: EngineInterface, choice: string): Promise<string> {
   }
 
   return after.sitter === 'on'
-    ? `Sitter on: when food or joy drops under 10, at two poops or when it is sick, it steps in for ${SITTER_FEE} 🪙 a care.`
+    ? `Sitter on. ${SITTER_DUTIES}`
     : 'Sitter off: the pet is all yours. /pet sitter on puts it back to work.'
 }
 
@@ -833,6 +866,7 @@ type View = {
   speech: Speech | null
   coins: number | null
   sitter: Sitter
+  canSitterWork: boolean
 }
 
 async function viewOf($: EngineInterface, current: Pet): Promise<View> {
@@ -846,6 +880,7 @@ async function viewOf($: EngineInterface, current: Pet): Promise<View> {
     speech: await read($, speech),
     coins: purse?.coins ?? null,
     sitter: purse?.sitter ?? 'none',
+    canSitterWork: purse !== null && canSitterWork(purse),
   }
 }
 
@@ -864,7 +899,7 @@ const textProps = (segment: Segment) => ({
  */
 function screen(ui: ElementTable, view: View, side: 'left' | 'right') {
   const { Box, Text } = ui
-  const line = statsLine(view.pet, view.coins, view.sitter)
+  const line = statsLine(view.pet, view.coins, view.sitter, view.canSitterWork)
   // Each poop is three columns and a space, the gap before them included.
   const poopColumns = stageOf(view.pet) === 'angel' ? 0 : view.pet.poops * 4
   const lane = Math.max(LANE, columnsOf(line) - poopColumns)

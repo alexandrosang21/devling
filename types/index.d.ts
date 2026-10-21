@@ -22,6 +22,10 @@ export type Pet = {
   lastActiveAt: number
   /** When the last meal comes out the other end. */
   poopDueAt: number | null
+  /** When the oldest poop lying about appeared; null when it is clean. */
+  poopedAt: number | null
+  /** The sitter's last care, which every open session shows when it sees it. */
+  sitterVisit: { act: ActKind; at: number } | null
   /** When it flew off to the pixel stars; null while it lives here. */
   leftAt: number | null
   /** The species it is drawn as, one of the skins: a look only, its life and level stay. */
@@ -52,7 +56,9 @@ export type Wallet = {
   today: number
   /** Days in a row with a session open. */
   streak: number
-  /** Hired for good once bought; while on, it looks after the pet for a fee a care when nobody else does. */
+  /** The day (YYYY-MM-DD) the sitter's wage was last paid; '' before it ever was. */
+  sitterPaidDay: string
+  /** Hired for good once bought; while on, it looks after the pet for a daily wage when nobody else does. */
   sitter: Sitter
 }
 
@@ -64,7 +70,12 @@ export type Speech = { text: string; untilFrame: number }
 
 /** A short animation (eating, playing, ...), counted in frames from `startFrame`. */
 export type ActKind = 'eat' | 'snack' | 'play' | 'clean' | 'heal' | 'sparkle'
-export type Act = { kind: ActKind; startFrame: number }
+export type Act = {
+  kind: ActKind
+  startFrame: number
+  /** Set when the sitter gave the care: it stands beside the pet while the act plays. */
+  isSitter?: boolean
+}
 
 /** The left-or-right guessing game, the classic virtual-pet guessing game. */
 export type Game = { round: number; wins: number }

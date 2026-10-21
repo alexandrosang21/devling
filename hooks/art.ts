@@ -1,5 +1,5 @@
-import type { Act, Pet, Sitter } from '../types'
-import { SITTER_FEE, SITTER_PRICE, heartPrice } from './economy'
+import type { Act, ActKind, Pet, Sitter } from '../types'
+import { SITTER_PRICE, SITTER_WAGE, heartPrice } from './economy'
 import { HEART, MAX_HEARTS, MINUTE, foodMax, forgiveIn, joyMax, levelOf, needsAttention, stageOf, xpForLevel } from './life'
 import type { Roll } from './life'
 import { DEFAULT_SKIN, pixelsOf, shapeOf, skinOf, widthOf } from './skins'
@@ -75,12 +75,12 @@ const pace = (tick: number, range: number): number => {
   return step <= range ? step : 2 * range - step
 }
 
-/** The act still playing at this frame, and how far into it. */
-export function actAt(act: Act | null, tick: number): { kind: Act['kind']; phase: number } | null {
+/** The act still playing at this frame, how far into it, and whether the sitter gave it. */
+export function actAt(act: Act | null, tick: number): { kind: Act['kind']; phase: number; isSitter: boolean } | null {
   if (act === null) return null
   const phase = tick - act.startFrame
 
-  return phase >= 0 && phase < ACT_FRAMES ? { kind: act.kind, phase } : null
+  return phase >= 0 && phase < ACT_FRAMES ? { kind: act.kind, phase, isSitter: act.isSitter === true } : null
 }
 
 /**
@@ -131,6 +131,10 @@ export function sceneOf(p: Pet, tick: number, act: Act | null, lane = LANE, dash
     fx = [{ text: '✚', color: 'error' }, blank, blank]
   } else if (needsAttention(p)) {
     fx = [{ text: isEven ? '!' : ' ', color: 'warning', isBold: true }, blank, blank]
+  }
+  // The sitter comes by: it stands beside the pet, on the row no care's effect uses, while its act plays.
+  if (playing?.isSitter === true) {
+    fx = [fx[0], { text: SITTER }, fx[2]]
   }
 
   return {
@@ -199,7 +203,7 @@ export const columnsOf = (row: Row): number =>
  * own marks. The coins close the line, so each one earned shows as it comes in, and the sitter's mark
  * stands beside them while it is on, dim when they no longer cover its fee.
  */
-export function statsLine(p: Pet, coins: number | null, sitter: Sitter = 'none'): Row {
+export function statsLine(p: Pet, coins: number | null, sitter: Sitter = 'none', canSitterWork = true): Row {
   const stage = stageOf(p)
   // One space between groups: the emoji already carry some air of their own in most terminal fonts.
   const purse: Row = coins === null ? [] : [{ text: ` 🪙 ${coins}`, color: COIN_COLOR }]
@@ -209,7 +213,7 @@ export function statsLine(p: Pet, coins: number | null, sitter: Sitter = 'none')
   if (stage === 'egg') {
     return [{ text: 'an egg · it wiggles! hatching soon...', isDim: true }, ...purse]
   }
-  const sitterMark: Row = sitter === 'on' ? [{ text: ` ${SITTER}`, isDim: coins !== null && coins < SITTER_FEE }] : []
+  const sitterMark: Row = sitter === 'on' ? [{ text: ` ${SITTER}`, isDim: !canSitterWork }] : []
   const flags: Row = []
   if (p.isAsleep) flags.push({ text: ' zZ', color: 'subtle' })
   if (p.isSick) flags.push({ text: ' ✚ sick', color: 'error' })
@@ -309,7 +313,7 @@ export function shopBlock(coins: number, owned: readonly string[], p: Pet | null
           ? '/pet buy sitter'
           : `${SITTER_PRICE - coins} 🪙 to go`
   const sitterRows = [
-    `A sitter for busy days: it feeds, cleans and doctors it when you don't, ${SITTER_FEE} 🪙 a care, no xp:`,
+    `A sitter for busy days: it feeds, cleans and doctors it when you don't, ${SITTER_WAGE} 🪙 a day it works, no xp:`,
     `  ${SITTER} sitter  ${SITTER_PRICE} 🪙 once · ${hiring}`,
   ]
 
@@ -372,6 +376,14 @@ export const DONE_LINES = [
   'commit before it breaks!',
   'that was a journey',
 ]
+/** What the pet says when the sitter comes by with each care. */
+export const SITTER_LINES: Readonly<Partial<Record<ActKind, string>>> = {
+  eat: '🤖 brought food! nom nom nom!',
+  snack: '🤖 brought a treat! yummy!',
+  clean: '🤖 tidied up. fresh and clean!',
+  heal: '🤖 medicine... yuck, but better',
+}
+
 export const COMPACT_LINES = ['my memory is a bit fuzzy now...', 'wait, what were we doing?', 'tl;dr: we did great']
 
 const BREAK_LINES = ['{time} at it. stretch, water, 10 min?', '{time} straight! a short walk?', '{time} in. rest your eyes a bit?']

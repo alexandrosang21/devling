@@ -22,11 +22,12 @@ export const EARN = {
 
 export const REVIVE_PRICE = 200
 /**
- * The sitter is hired once, then paid for each care it gives: coins earned at work end up as meals. The
- * dearest thing in the shop, about five working days, since it does the most.
+ * The sitter is hired once, the dearest thing in the shop at about five working days since it does the most,
+ * then paid a wage on each day it works, at its first care: coins earned at work end up as meals, and a day
+ * it is not needed costs nothing.
  */
 export const SITTER_PRICE = 1000
-export const SITTER_FEE = 5
+export const SITTER_WAGE = 100
 
 /** What one more food or joy heart costs, by the heart it would be: the fourth, then the fifth. */
 export const heartPrice = (heart: number): number => (heart <= 4 ? 150 : 300)
@@ -49,7 +50,19 @@ export function walletOf(value: unknown): Wallet {
     today: count(saved.today),
     streak: count(saved.streak),
     sitter: saved.sitter === 'on' || saved.sitter === 'off' ? saved.sitter : 'none',
+    sitterPaidDay: typeof saved.sitterPaidDay === 'string' ? saved.sitterPaidDay : '',
   }
+}
+
+/** Whether the sitter can work today: it is on, and today is paid or the coins cover it. */
+export const canSitterWork = (w: Wallet): boolean => w.sitter === 'on' && (w.sitterPaidDay === w.day || w.coins >= SITTER_WAGE)
+
+/** The wallet with the sitter's day paid, the same wallet when it already is, null when the coins fall short. */
+export function paySitter(w: Wallet): Wallet | null {
+  if (w.sitterPaidDay === w.day) return w
+  const paid = spend(w, SITTER_WAGE)
+
+  return paid === null ? null : { ...paid, sitterPaidDay: w.day }
 }
 
 const pad = (n: number): string => String(n).padStart(2, '0')
